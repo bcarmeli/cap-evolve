@@ -105,6 +105,16 @@ path, how to obtain it, and the alternatives. Never invent a NEEDED input.
   `run-optimizer` skill against `optimizers/registry.yaml` (run `run-optimizer --list`
   to see the available names); `optimizer_model` is the backend-specific model id.
 
+- **target_model** (default `""` = profile-agnostic): the runtime/CONSUMING LLM the
+  agent reads these capabilities with — DISTINCT from `optimizer_model`, which proposes
+  the edits. Give a concrete model id (e.g. `gpt-oss-120b`) or a capability tier
+  (`frontier | strong | mid | weak`). cap-evolve steers the optimizer prompt and the
+  capability guidance to optimize FOR this reader (a weaker reader gets more explicit
+  rules, worked examples, and code enforcement; a frontier reader gets leaner prose that
+  explains the *why*). ASK the user which model the agent runs at runtime; if unknown,
+  leave blank and note it in `PROJECT.md`. Optionally set `target_profile_file` to a raw
+  text/markdown file to override the resolved tier's built-in brief.
+
 - **runner_repo_path** (default `""`): the benchmark/runner SOURCE (a local path or
   checkout), surfaced to the optimizer as READ-ONLY context so it can consult the
   runner's tools / scoring / task structure while proposing edits. Set it when the
@@ -161,6 +171,7 @@ path, how to obtain it, and the alternatives. Never invent a NEEDED input.
   - `metric_primary`: the single metric that decides accept/reject (= the scalar reward). Blank = use the reward directly.
   - `metrics_display` + `metric_directions`: extra SHOWN-ONLY metrics and each one's direction (`higher`|`lower`). These never affect the gate — display only.
 - **github_integration** (default `false`): if `true`, intake runs `gh auth status`; when authed, cap-evolve may mirror the algorithm's work items as issues and ship the winner as a PR (`Closes #n`). WHAT gets mirrored is algorithm-specific — the chosen `algorithm_skill` defines it (e.g. evo-graph mirrors *weaknesses*; a candidate-based algorithm might mirror candidates/iterations). GitHub is NEVER the source of truth — the run dir is. If unauthed, intake offers `gh auth login` or skip.
+- **orchestration_mode** (default `deterministic`): `deterministic` = cap-evolve sequences the loop (code-enforced honesty). `agent` = the coding agent drives the loop via cap-evolve primitives and seals with `cap-evolve finalize`. Agent mode also uses `stop_condition`.
 - **stop_condition** (default empty): agent-mode free-text halt rule, re-read each round. Deterministic mode ignores it and uses the budget knobs.
 
 - **baseline traces** (optional): prior rollouts to seed diagnosis. Default: none

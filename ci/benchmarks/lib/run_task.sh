@@ -24,7 +24,7 @@ FROZEN="${4:-}"
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$LIB_DIR/../../.." && pwd)"
-ITER="${ITERATIONS:-1}"                                   # optimizer iterations (CI-configurable; default 1)
+ITER="${ITERATIONS:-3}"                                   # optimizer iterations (CI-configurable; default 3)
 AGENT_MODEL="${AGENT_MODEL:-aws/gpt-oss-120b}"            # bare gateway model for the AGENT under test
 #   hard tasks use aws/gpt-oss-120b; flip tasks may use a stronger model (e.g. aws/claude-sonnet-5)
 PY="${CAPEVOLVE_PY:-$REPO/.venv-e2e/bin/python}"          # venv with core+litellm(+swebench/datasets)
@@ -56,6 +56,7 @@ LITELLM_PROXY_API_KEY=$ANTHROPIC_AUTH_TOKEN
 MAX_TOKENS=8000
 TEMPERATURE=0.0
 ENV
+    export TAU2_MAX_CONCURRENCY=10        # run_trials pool bound (parallel trials)
     ;;
   swebench)
     cp "$TPL/swe_bench/adapter.py" "$PROJ/adapters/"
@@ -68,9 +69,10 @@ LITELLM_PROXY_API_KEY=$ANTHROPIC_AUTH_TOKEN
 MAX_TOKENS=8000
 TEMPERATURE=0.0
 SWEBENCH_INSTANCE_IDS=$TASK_ID
-SWEBENCH_MAX_WORKERS=1
+SWEBENCH_MAX_WORKERS=10
 SWEBENCH_NAMESPACE=${SWEBENCH_NAMESPACE:-swebench}
 ENV
+    export SWEBENCH_MAX_WORKERS=10        # run_trials generation pool (read at adapter import)
     ;;
   skillsbench)
     cp "$TPL/skillsbench/adapter.py" "$PROJ/adapters/"
@@ -88,10 +90,11 @@ ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL
 ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN
 SKILLSBENCH_MODEL=$AGENT_MODEL
 SKILLSBENCH_TASKS_DIR=$SB_SRC/tasks
-SKILLSBENCH_CONCURRENCY=1
+SKILLSBENCH_CONCURRENCY=10
 ENV
     export SKILLSBENCH_MODEL="$AGENT_MODEL"        # read at adapter import
     export SKILLSBENCH_TASKS_DIR="$SB_SRC/tasks"   # local tasks (avoid remote SHA resolution)
+    export SKILLSBENCH_CONCURRENCY=10              # run_trials pool bound (parallel trials)
     ;;
   *) echo "unknown bench: $BENCH" >&2; exit 2;;
 esac
@@ -100,16 +103,28 @@ esac
 printf '{"train":["%s"],"val":["%s"],"test":["%s"]}\n' "$TASK_ID" "$TASK_ID" "$TASK_ID" \
   > "$PROJ/inputs/split_ids.json"
 
+# target_model = the CONSUMING/runtime model the agent-under-test reads these
+# capabilities with (here $AGENT_MODEL, e.g. aws/gpt-oss-120b), distinct from the
+# optimizer_model that PROPOSES edits. Declaring it steers the optimizer prompt to
+# optimize FOR that reader's tier. Provider prefixes (aws/, litellm_proxy/) resolve
+# via target_profile's substring matcher. Blank == today's reader-agnostic behavior.
 cat > "$PROJ/capevolve.yaml" <<YAML
 capabilities:       $CAPS
 capability_path:    seed_capability
 optimizer_skill:    claude-code
 optimizer_model:    claude-opus-4-8
+target_model:       $AGENT_MODEL
+# Per-iteration optimizer caps — WITHOUT these the claude-code optimizer runs unbounded
+# each iteration (observed ~26 min / iteration with target_model fan-out), making a
+# 3-iter × 10-task smoke take hours and cost hundreds of $. --max-turns bounds wall-time,
+# --max-budget-usd is a hard $ stop; whichever hits first ends the iteration. Overridable.
+optimizer_max_turns:    ${OPTIMIZER_MAX_TURNS:-80}
+optimizer_usd_per_iter: ${OPTIMIZER_USD_PER_ITER:-4.0}
 algorithm_skill:    hill-climb
 algorithm_focus:    all
 dataset_source:     adapter
 split_ids_file:     "inputs/split_ids.json"
-num_trials:         1
+num_trials:         10
 gate_mode:          paired
 gate_k_se:          1.0
 max_iterations:     $ITER

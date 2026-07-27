@@ -107,7 +107,7 @@ models, task/trial counts, commits, and costs: **[docs/RESULTS.md](docs/RESULTS.
 |---|---|---|---|
 | **toy_calc** (zero-API) | sealed test | `0.0 → 1.0` | deterministic proof |
 | **τ²-bench airline** (policy + tools) | val — *fit metric* | `0.536 → 0.712` | **+0.176 / +32.8%** |
-| **τ²-bench airline**, held-out 30/10/10 | sealed **test** | `30.0 → 47.5` | **+17.5 pp / +58.3%** |
+| **τ²-bench airline**, held-out 30(=val)/20 | sealed **test** | `30.0 → 47.5` | **+17.5 pp / +58.3%** |
 | **SkillsBench** (skill package) | sealed **test** (held-out) | `0.556 → 0.667` | **+0.111 / +20.0%** |
 
 *Not an apples-to-apples leaderboard.* For how the held-out τ²-bench result sits next to
@@ -185,6 +185,7 @@ from zero: [tau2](docs/REPRODUCE_tau2.md) · [SkillsBench](docs/REPRODUCE_skills
 | [Adapter templates](docs/ADAPTER_TEMPLATES.md) | You want a copy-and-run adapter (JSONL, HuggingFace, tau2, SWE-bench, SkillsBench) |
 | [Adapter contract](docs/ADAPTER_CONTRACT.md) | You are implementing an adapter |
 | [Architecture](docs/ARCHITECTURE.md) | You want to understand the pipeline and optimizer context |
+| [Agent orchestration](docs/AGENT_ORCHESTRATION.md) | You want the agent to drive the loop itself (`orchestration_mode: agent`, `agent-optimize`) |
 | [Honest evaluation](docs/HONEST_EVAL.md) | You need details on splits, gates, and sealing |
 | [Results](docs/RESULTS.md) | You want the full experiments and artifacts |
 | [Comparison](docs/COMPARISON.md) | You want positioning vs other tools and external results |
