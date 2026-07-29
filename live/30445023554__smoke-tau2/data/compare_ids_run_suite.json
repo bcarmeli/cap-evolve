@@ -1,1 +1,1 @@
-{"runs":[{"run_id":"run_suite","algorithm":null,"baseline_val":null,"best_val":null,"delta_pct":null,"test_reward":null,"total_usd":0.0,"tokens":0,"iterations":0,"series":[]}],"tasks":[]}
+{"runs":[{"run_id":"run_suite","algorithm":null,"baseline_val":0.23000000000000004,"best_val":0.23000000000000004,"delta_pct":0.0,"test_reward":null,"total_usd":0.0,"tokens":0,"iterations":0,"series":[{"iteration":0,"best_so_far":0.23000000000000004}]}],"tasks":["8","11","12","17","19","22","23","25","37","40"]}
