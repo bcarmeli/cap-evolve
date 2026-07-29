@@ -1,0 +1,1 @@
+{"path":"bench_jobs/seed/seed4/2026-07-29__18-32-50/reserves-at-risk-calc__57ab1a70/timing.json","binary":false,"size":120,"truncated":false,"text":"{\n  \"environment_setup\": 237.0,\n  \"agent_setup\": 1.4,\n  \"agent_execution\": 600.4,\n  \"verifier\": 12.4,\n  \"total\": 889.3\n}"}

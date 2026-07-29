@@ -1,0 +1,1 @@
+{"path":"bench_jobs/seed/seed4/2026-07-29__18-32-50/invoice-fraud-detection__3d4f712f/timing.json","binary":false,"size":93,"truncated":false,"text":"{\n  \"environment_setup\": 161.2,\n  \"agent_setup\": 6.4,\n  \"verifier\": 52.6,\n  \"total\": 1082.1\n}"}

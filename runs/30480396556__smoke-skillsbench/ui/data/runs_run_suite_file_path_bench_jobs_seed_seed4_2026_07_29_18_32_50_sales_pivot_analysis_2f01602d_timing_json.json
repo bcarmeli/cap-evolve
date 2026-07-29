@@ -1,0 +1,1 @@
+{"path":"bench_jobs/seed/seed4/2026-07-29__18-32-50/sales-pivot-analysis__2f01602d/timing.json","binary":false,"size":118,"truncated":false,"text":"{\n  \"environment_setup\": 64.7,\n  \"agent_setup\": 1.9,\n  \"agent_execution\": 60.0,\n  \"verifier\": 24.0,\n  \"total\": 266.4\n}"}
