@@ -1,1 +1,0 @@
-{"path":"bench_jobs/seed/seed3/2026-07-29__18-32-50/xlsx-recover-data__dc912651/timing.json","binary":false,"size":119,"truncated":false,"text":"{\n  \"environment_setup\": 56.0,\n  \"agent_setup\": 6.2,\n  \"agent_execution\": 180.1,\n  \"verifier\": 14.1,\n  \"total\": 357.3\n}"}

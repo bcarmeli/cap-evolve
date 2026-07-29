@@ -1,1 +1,0 @@
-{"path":"bench_jobs/seed/seed3/2026-07-29__18-32-50/offer-letter-generator__0fdb7c9d/timing.json","binary":false,"size":120,"truncated":false,"text":"{\n  \"environment_setup\": 221.0,\n  \"agent_setup\": 44.0,\n  \"agent_execution\": 90.0,\n  \"verifier\": 17.7,\n  \"total\": 464.1\n}"}

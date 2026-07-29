@@ -1,1 +1,0 @@
-{"path":"bench_jobs/seed/seed0/2026-07-29__18-32-50/pdf-excel-diff__a06cb0b1/timing.json","binary":false,"size":119,"truncated":false,"text":"{\n  \"environment_setup\": 66.7,\n  \"agent_setup\": 8.6,\n  \"agent_execution\": 540.3,\n  \"verifier\": 11.6,\n  \"total\": 703.2\n}"}
