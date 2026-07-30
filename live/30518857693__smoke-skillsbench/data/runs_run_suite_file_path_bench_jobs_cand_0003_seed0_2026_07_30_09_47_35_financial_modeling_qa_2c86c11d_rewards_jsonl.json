@@ -1,0 +1,1 @@
+{"path":"bench_jobs/cand_0003/seed0/2026-07-30__09-47-35/financial-modeling-qa__2c86c11d/rewards.jsonl","binary":false,"size":188,"truncated":false,"text":"{\"ts\": \"2026-07-30T10:16:57.472699\", \"type\": \"terminal\", \"source\": \"verifier\", \"value\": 0.0, \"tag\": \"reward\", \"step_index\": null, \"space\": \"output\", \"granularity\": \"terminal\", \"meta\": {}}\n"}
