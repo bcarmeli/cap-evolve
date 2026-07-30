@@ -1,0 +1,1 @@
+{"path":"bench_jobs/cand_0003/seed2/2026-07-30__09-47-35/pptx-reference-formatting__15b9dc5e/rewards.jsonl","binary":false,"size":188,"truncated":false,"text":"{\"ts\": \"2026-07-30T10:51:42.255733\", \"type\": \"terminal\", \"source\": \"verifier\", \"value\": 1.0, \"tag\": \"reward\", \"step_index\": null, \"space\": \"output\", \"granularity\": \"terminal\", \"meta\": {}}\n"}
