@@ -1,0 +1,1 @@
+{"path":"bench_jobs/cand_0003/seed3/2026-07-30__09-47-35/weighted-gdp-calc__a3089f52/timing.json","binary":false,"size":123,"truncated":false,"text":"{\n  \"environment_setup\": 175.1,\n  \"agent_setup\": 17.6,\n  \"agent_execution\": 270.1,\n  \"verifier\": 565.7,\n  \"total\": 1112.5\n}"}

@@ -1,0 +1,1 @@
+{"path":"bench_jobs/cand_0003/seed1/2026-07-30__09-47-35/financial-modeling-qa__8c5b8dba/timing.json","binary":false,"size":122,"truncated":false,"text":"{\n  \"environment_setup\": 149.7,\n  \"agent_setup\": 1.6,\n  \"agent_execution\": 300.1,\n  \"verifier\": 603.1,\n  \"total\": 1200.1\n}"}
