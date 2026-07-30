@@ -1,1 +1,0 @@
-{"path":"bench_jobs/cand_0003/seed1/2026-07-30__09-47-35/exceltable-in-ppt__85ee5483/timing.json","binary":false,"size":120,"truncated":false,"text":"{\n  \"environment_setup\": 403.9,\n  \"agent_setup\": 6.7,\n  \"agent_execution\": 180.1,\n  \"verifier\": 17.8,\n  \"total\": 683.6\n}"}

@@ -1,1 +1,0 @@
-{"path":"bench_jobs/cand_0003/seed4/2026-07-30__09-47-35/invoice-fraud-detection__96db1497/rewards.jsonl","binary":false,"size":188,"truncated":false,"text":"{\"ts\": \"2026-07-30T10:07:34.809829\", \"type\": \"terminal\", \"source\": \"verifier\", \"value\": 0.0, \"tag\": \"reward\", \"step_index\": null, \"space\": \"output\", \"granularity\": \"terminal\", \"meta\": {}}\n"}

@@ -1,1 +1,0 @@
-{"path":"bench_jobs/cand_0003/seed1/2026-07-30__09-47-35/reserves-at-risk-calc__80a068ff/rewards.jsonl","binary":false,"size":188,"truncated":false,"text":"{\"ts\": \"2026-07-30T11:18:26.832590\", \"type\": \"terminal\", \"source\": \"verifier\", \"value\": 0.0, \"tag\": \"reward\", \"step_index\": null, \"space\": \"output\", \"granularity\": \"terminal\", \"meta\": {}}\n"}

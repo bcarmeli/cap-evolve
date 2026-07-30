@@ -1,1 +1,0 @@
-{"path":"bench_jobs/cand_0003/seed1/2026-07-30__09-47-35/pptx-reference-formatting__f8ef11de/timing.json","binary":false,"size":120,"truncated":false,"text":"{\n  \"environment_setup\": 25.4,\n  \"agent_setup\": 6.2,\n  \"agent_execution\": 360.1,\n  \"verifier\": 243.6,\n  \"total\": 744.7\n}"}

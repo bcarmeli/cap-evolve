@@ -1,1 +1,0 @@
-{"path":"bench_jobs/cand_0003/seed1/2026-07-30__09-47-35/offer-letter-generator__b7f849aa/rewards.jsonl","binary":false,"size":188,"truncated":false,"text":"{\"ts\": \"2026-07-30T09:52:28.819977\", \"type\": \"terminal\", \"source\": \"verifier\", \"value\": 1.0, \"tag\": \"reward\", \"step_index\": null, \"space\": \"output\", \"granularity\": \"terminal\", \"meta\": {}}\n"}

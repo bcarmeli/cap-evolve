@@ -1,1 +1,0 @@
-{"path":"bench_jobs/cand_0003/seed3/2026-07-30__09-47-35/weighted-gdp-calc__a3089f52/rewards.jsonl","binary":false,"size":188,"truncated":false,"text":"{\"ts\": \"2026-07-30T10:21:37.072836\", \"type\": \"terminal\", \"source\": \"verifier\", \"value\": 1.0, \"tag\": \"reward\", \"step_index\": null, \"space\": \"output\", \"granularity\": \"terminal\", \"meta\": {}}\n"}
