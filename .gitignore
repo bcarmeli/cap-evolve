@@ -16,6 +16,9 @@ e2e/
 # cap-evolve run state (per-run, not source)
 .capevolve/
 
+# parsec-intake reviewer deliverables (local, per-run)
+parsec-results/
+
 # secrets — never commit credentials (RITS_API_KEY, WATSONX_*, ANTHROPIC_API_KEY, …)
 .env
 .env.*
