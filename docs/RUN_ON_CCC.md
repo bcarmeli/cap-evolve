@@ -216,6 +216,37 @@ Read the file for the full detail — every action has a why. In brief:
    Any downstream `FROM ubuntu:24.04` picks up our patched local image
    (podman uses local before remote when tags match).
 
+   **Additional base images patched by v6/v7/v8 (`_patch_slim_base` helper):**
+   - v6 (2026-08-21): `TAR_OPTIONS=--no-same-owner` baked into every patched
+     image so extractors like `tar xf` don't fail on uid/gid entries the
+     rootless namespace can't map (uv's tarball uses uid=1001/gid=117; without
+     the flag, `tar` errors and the caller — typically a verifier `test.sh`
+     — silently reports "uvx: command not found").
+   - v7 (2026-08-21): `uv`/`uvx` pre-installed at BOTH `/usr/local/bin`
+     (system path) AND `/root/.local/bin/` (verifier-hardcoded path). Many
+     SkillsBench verifier `test.sh` scripts do:
+
+         curl -LsSf https://astral.sh/uv/... | sh > /dev/null 2>&1
+         source $HOME/.local/bin/env
+         uvx --with pytest ...
+
+     If the compute node cannot reach `https://astral.sh`, that install
+     silently fails (redirected to `/dev/null`), and the `source` + `uvx`
+     lines then error. Baking uv into the image at BOTH locations means
+     the verifier's hardcoded `source $HOME/.local/bin/env` and any
+     PATH-lookup for `uvx` succeed without needing outbound access.
+   - v8 (2026-08-25): the same fixes (apt-sandbox-user=root, chown/adduser
+     wrappers, TAR_OPTIONS, uv preinstall) applied to additional bases used
+     by SkillsBench tasks — `python:3.12-slim`, `python:3.11-slim`,
+     `python:3.12.8-slim`, `ubuntu:20.04`. Debian-slim variants ship
+     without `curl` or `ca-certificates`, so the patch adds those via apt
+     before running the uv installer.
+
+     The `_patch_slim_base <base_tag> <marker_name>` helper in the setup
+     script builds each of these in parallel to the ubuntu:24.04 build.
+     Add more base images by appending another call with the corresponding
+     marker.
+
 7. **Prepends `~/.local/bin` to `$PATH`** — not just "adds if missing"
    but explicitly puts it FIRST. If a login script has already added
    `~/.local/bin` to a later position, our `docker` shim (§3) would be

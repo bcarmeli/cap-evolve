@@ -167,7 +167,18 @@ export DOCKER_HOST="unix://$_sock"
 # setuid fails and `apt-get install` dies. Fix: shadow the ubuntu:24.04
 # base image locally with an /etc/apt config that tells apt to stay as
 # root. Any downstream FROM ubuntu:24.04 inherits this and Just Works.
-_patched_marker="$STORAGE_BASE/.patched-ubuntu24-v5"
+_patched_marker="$STORAGE_BASE/.patched-ubuntu24-v7"
+# v7 (2026-08-21): pre-install uv/uvx to /root/.local/bin AT BUILD TIME so
+#   the verifier's `source $HOME/.local/bin/env` and `uvx` calls succeed
+#   even if the compute node can't reach https://astral.sh at test time.
+#   TAR_OPTIONS=--no-same-owner remains as a belt-and-braces fallback.
+# v6 (2026-08-21): add TAR_OPTIONS=--no-same-owner and pre-install uv/uvx
+#   to /usr/local/bin. First attempt at unblocking 8+ SkillsBench tasks
+#   whose verifier scripts install uv at test time and hit `tar: Cannot
+#   change ownership to uid 1001, gid 117: Invalid argument`. Did NOT
+#   fix the failure because the verifier hardcodes $HOME/.local/bin/env
+#   as its "source" target and calls its own `curl | sh` — which fails
+#   silently on compute nodes without outbound access to astral.sh.
 if [ ! -f "$_patched_marker" ]; then
     _patch_dockerfile=$(mktemp /tmp/patched-ubuntu.XXXXXX.Dockerfile)
     cat > "$_patch_dockerfile" <<'DOCKERFILE'
@@ -207,8 +218,58 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         python3 python3-pip curl \
         poppler-utils \
-        build-essential \
+        build-essential ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+# 5) TAR_OPTIONS=--no-same-owner (SkillsBench verifier fix, 2026-08-21).
+#    Many SkillsBench verifiers install `uv` at test time by extracting
+#    a tarball whose entries carry uid=1001/gid=117 (uv's original build
+#    user). Rootless podman with a single-UID user namespace cannot map
+#    to those uids, so `tar xf` fails with "Cannot change ownership".
+#    GNU tar honors TAR_OPTIONS globally; setting it in /etc/environment
+#    plus /etc/profile.d makes every login and non-login shell inherit
+#    the flag. This unblocks any downstream tarball extraction.
+RUN echo 'TAR_OPTIONS="--no-same-owner"' >> /etc/environment && \
+    printf '%s\n' 'export TAR_OPTIONS="--no-same-owner"' \
+        > /etc/profile.d/tar-no-same-owner.sh && \
+    chmod +x /etc/profile.d/tar-no-same-owner.sh
+ENV TAR_OPTIONS=--no-same-owner
+# 6) Pre-install uv/uvx to BOTH /usr/local/bin (system-wide) and
+#    /root/.local/bin (SkillsBench-verifier-expected location).
+#    (SkillsBench verifier fix, 2026-08-21 v7 revision.)
+#
+#    Many SkillsBench verifier test.sh scripts hardcode this pattern:
+#        curl -LsSf https://astral.sh/uv/<ver>/install.sh | sh > /dev/null 2>&1
+#        source $HOME/.local/bin/env
+#        uvx --with pytest ...
+#    On CCC compute nodes:
+#      (a) The verifier's `curl` step frequently FAILS silently — either
+#          the compute node has no outbound access to astral.sh, or the
+#          tar-extract hits "Cannot change ownership to uid 1001, gid 117"
+#          in rootless podman's single-UID user namespace. Both fail
+#          because of `> /dev/null 2>&1`.
+#      (b) When (a) fails, $HOME/.local/bin/env doesn't exist, `source`
+#          errors out, and `uvx: command not found`.
+#      (c) Even if uv is on system PATH (/usr/local/bin), verifier's
+#          `source $HOME/.local/bin/env` STILL fails, and PATH-lookup for
+#          `uvx` happens BEFORE (not after) source, so system uv isn't
+#          reached.
+#
+#    Fix: bake the exact files the verifier expects at build time. The
+#    astral install.sh honors HOME to pick its dest dir, so setting
+#    HOME=/root during the RUN puts uv, uvx, and (crucially) the `env`
+#    activation script at /root/.local/bin/. Then the verifier's
+#    hardcoded `source $HOME/.local/bin/env` succeeds without needing
+#    network access at test time.
+#
+#    We ALSO install to /usr/local/bin as belt-and-braces (verifier for
+#    tasks that expect system-level uvx). Both install steps are
+#    non-fatal — TAR_OPTIONS above still allows verifier's own install
+#    to succeed if the compute node has network reach.
+RUN curl -LsSf https://astral.sh/uv/install.sh | \
+    env UV_INSTALL_DIR=/usr/local/bin UV_UNMANAGED_INSTALL=1 sh || \
+    echo "warn: uv preinstall to /usr/local/bin failed; verifier fallback via /root/.local/bin"
+RUN curl -LsSf https://astral.sh/uv/install.sh | env HOME=/root sh || \
+    echo "warn: uv preinstall to /root/.local/bin failed; verifier will attempt its own install"
 DOCKERFILE
     # Force the tag off any pre-existing local image before rebuilding.
     podman rmi -f docker.io/library/ubuntu:24.04 >/dev/null 2>&1 || true
@@ -224,6 +285,75 @@ DOCKERFILE
     rm -f "$_patch_dockerfile"
 fi
 
+# v8 (2026-08-25): patch python:3.x-slim base images too. 29 SkillsBench tasks
+# FROM python:3.12-slim | python:3.11-slim | python:3.12.8-slim. Same apt-
+# in-rootless failures as ubuntu:24.04 (seteuid 42 → _apt user), and same fix
+# recipe: APT::Sandbox::User "root", chown/chgrp/useradd/etc wrappers,
+# TAR_OPTIONS, and pre-installed uv/uvx. Heavy preinstalls (poppler/build-
+# essential) are OMITTED — SkillsBench python-slim tasks add what they need.
+_patch_slim_base() {
+    local _base_tag="$1"           # e.g. python:3.12-slim
+    local _marker_name="$2"        # e.g. .patched-python312slim-v8
+    local _marker="$STORAGE_BASE/$_marker_name"
+    [ -f "$_marker" ] && return 0
+    local _df
+    _df=$(mktemp /tmp/patched-slim.XXXXXX.Dockerfile)
+    cat > "$_df" <<DOCKERFILE
+FROM docker.io/library/${_base_tag}
+# apt stays as root (no /etc/subuid entry for our host UID).
+RUN echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/00-rootless && \\
+    echo 'APT::Install-Recommends "false";' >> /etc/apt/apt.conf.d/00-rootless
+# Swallow ownership errors in postinst scripts (chown/chgrp) and user/group
+# management (useradd/adduser families). dpkg-statoverride wrapped too for
+# packages that flip setuid bits via libc's fchown.
+RUN set -e; \\
+    for bin in /usr/bin/chown /usr/bin/chgrp \\
+               /usr/sbin/useradd /usr/sbin/groupadd \\
+               /usr/sbin/usermod /usr/sbin/groupmod \\
+               /usr/sbin/adduser /usr/sbin/addgroup \\
+               /usr/sbin/dpkg-statoverride /usr/bin/dpkg-statoverride; do \\
+        [ -x "\$bin" ] || continue; \\
+        mv "\$bin" "\${bin}.real"; \\
+        printf '%s\\n' '#!/bin/sh' "\${bin}.real \\"\\\$@\\" 2>/dev/null || :" > "\$bin"; \\
+        chmod +x "\$bin"; \\
+    done
+# tar: no-same-owner globally, so tarballs w/ non-mappable uid/gid unpack.
+RUN echo 'TAR_OPTIONS="--no-same-owner"' >> /etc/environment && \\
+    printf '%s\\n' 'export TAR_OPTIONS="--no-same-owner"' \\
+        > /etc/profile.d/tar-no-same-owner.sh && \\
+    chmod +x /etc/profile.d/tar-no-same-owner.sh
+ENV TAR_OPTIONS=--no-same-owner
+# python:3.x-slim does NOT ship curl or ca-certificates. Install both so the
+# uv install script (fetched from astral.sh) can run at build time and so
+# downstream verifier test.sh scripts that call curl also work.
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends curl ca-certificates && \\
+    rm -rf /var/lib/apt/lists/*
+# uv/uvx at both /usr/local/bin (system) and /root/.local/bin (verifier-expected).
+RUN curl -LsSf https://astral.sh/uv/install.sh | \\
+    env UV_INSTALL_DIR=/usr/local/bin UV_UNMANAGED_INSTALL=1 sh || \\
+    echo "warn: uv preinstall to /usr/local/bin failed"
+RUN curl -LsSf https://astral.sh/uv/install.sh | env HOME=/root sh || \\
+    echo "warn: uv preinstall to /root/.local/bin failed"
+DOCKERFILE
+    podman rmi -f "docker.io/library/${_base_tag}" >/dev/null 2>&1 || true
+    if podman build \
+        -t "docker.io/library/${_base_tag}" \
+        -f "$_df" \
+        "$(dirname "$_df")" >"$RUN_BASE/patched-${_base_tag//[:\/]/_}-build.log" 2>&1; then
+        touch "$_marker"
+        echo "[setup_podman] patched ${_base_tag} for apt-in-rootless (log: $RUN_BASE/patched-${_base_tag//[:\/]/_}-build.log)"
+    else
+        echo "[setup_podman] WARN: could not pre-patch ${_base_tag} (log: $RUN_BASE/patched-${_base_tag//[:\/]/_}-build.log)"
+    fi
+    rm -f "$_df"
+}
+_patch_slim_base "python:3.12-slim"   ".patched-python312slim-v8"
+_patch_slim_base "python:3.11-slim"   ".patched-python311slim-v8"
+_patch_slim_base "python:3.12.8-slim" ".patched-python3128slim-v8"
+# ubuntu:20.04 for glm-lake-mendota + fix-build-google-auto (bucket 3).
+_patch_slim_base "ubuntu:20.04"       ".patched-ubuntu2004-v8"
+
 # Sanity summary (previously interactive-only; now always emitted so batch
 # runs get a non-empty setup.log for post-mortem).
 echo "[setup_podman] XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
@@ -235,4 +365,4 @@ echo "[setup_podman] try: podman info | head -30"
 
 unset _uid _desired _sock _i _patched_marker _patch_dockerfile _pidfile
 unset _dbus_sock _dbus_pidfile _docker_shim
-unset -f _service_alive _dbus_alive 2>/dev/null || true
+unset -f _service_alive _dbus_alive _patch_slim_base 2>/dev/null || true
