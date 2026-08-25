@@ -295,7 +295,20 @@ _patch_slim_base() {
     local _base_tag="$1"           # e.g. python:3.12-slim
     local _marker_name="$2"        # e.g. .patched-python312slim-v8
     local _marker="$STORAGE_BASE/$_marker_name"
-    [ -f "$_marker" ] && return 0
+    # Content check: if the marker exists AND the tagged image still has our
+    # sentinel /etc/apt/apt.conf.d/00-rootless, skip. Otherwise rebuild. A
+    # downstream task Dockerfile using `FROM --platform=linux/amd64 <tag>` can
+    # trigger podman to auto-pull the vanilla remote image and overwrite our
+    # local tag WITHOUT clearing the marker; the content check catches that.
+    if [ -f "$_marker" ]; then
+        if podman run --rm "docker.io/library/${_base_tag}" \
+                sh -c 'grep -q "APT::Sandbox::User" /etc/apt/apt.conf.d/00-rootless 2>/dev/null' \
+                >/dev/null 2>&1; then
+            return 0
+        fi
+        rm -f "$_marker"
+        echo "[setup_podman] ${_base_tag} tag lost our patch (auto-pull overwrite); rebuilding"
+    fi
     local _df
     _df=$(mktemp /tmp/patched-slim.XXXXXX.Dockerfile)
     cat > "$_df" <<DOCKERFILE
