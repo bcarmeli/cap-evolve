@@ -311,8 +311,17 @@ _patch_slim_base() {
     fi
     local _df
     _df=$(mktemp /tmp/patched-slim.XXXXXX.Dockerfile)
+    # Resolve full image reference — allow non-docker.io/library bases too.
+    local _from_ref
+    case "$_base_tag" in
+        */*) _from_ref="$_base_tag" ;;  # already qualified (e.g. gcr.io/…, bugswarm/…)
+        *)   _from_ref="docker.io/library/$_base_tag" ;;
+    esac
     cat > "$_df" <<DOCKERFILE
-FROM docker.io/library/${_base_tag}
+FROM ${_from_ref}
+# Force root so the patch RUNs work on bases that set USER to a non-root uid
+# (e.g. bugswarm/cached-images has USER 1000, which rootless can't setresgid to).
+USER root
 # apt stays as root (no /etc/subuid entry for our host UID).
 RUN echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/00-rootless && \\
     echo 'APT::Install-Recommends "false";' >> /etc/apt/apt.conf.d/00-rootless
@@ -349,9 +358,9 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | \\
 RUN curl -LsSf https://astral.sh/uv/install.sh | env HOME=/root sh || \\
     echo "warn: uv preinstall to /root/.local/bin failed"
 DOCKERFILE
-    podman rmi -f "docker.io/library/${_base_tag}" >/dev/null 2>&1 || true
+    podman rmi -f "${_from_ref}" >/dev/null 2>&1 || true
     if podman build \
-        -t "docker.io/library/${_base_tag}" \
+        -t "${_from_ref}" \
         -f "$_df" \
         "$(dirname "$_df")" >"$RUN_BASE/patched-${_base_tag//[:\/]/_}-build.log" 2>&1; then
         touch "$_marker"
@@ -366,6 +375,9 @@ _patch_slim_base "python:3.11-slim"   ".patched-python311slim-v8"
 _patch_slim_base "python:3.12.8-slim" ".patched-python3128slim-v8"
 # ubuntu:20.04 for glm-lake-mendota + fix-build-google-auto (bucket 3).
 _patch_slim_base "ubuntu:20.04"       ".patched-ubuntu2004-v8"
+# Third-party bases with tar-chown uv-install failures (bucket 3 recovery).
+_patch_slim_base "docker.io/bugswarm/cached-images:AgentOps-AI-agentops-24579293289" ".patched-bugswarm-agentops-v8"
+_patch_slim_base "gcr.io/oss-fuzz-base/base-builder-python"                          ".patched-ossfuzz-python-v8"
 
 # Sanity summary (previously interactive-only; now always emitted so batch
 # runs get a non-empty setup.log for post-mortem).
