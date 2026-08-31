@@ -197,7 +197,7 @@ distinguishable from the original c1/c2/c3 numbers.
 - The 10 NO_SIGNAL tasks (seed=0.0 and every candidate=0.0 — no lever at all).
 - The Opus 4.6 migration for optimizer + evaluator.
 - Executing the train/test-split-by-shared-skill proposal (design delivered in
-  `train_test_split_proposal.md`, execution deferred).
+  `../docs/train_test_split_proposal.md`, execution deferred).
 - Any edit to `heatmap.html` / `summary.md` / `evoskill_comparison_chart.html`, including
   the known `r.blocked`→`no_signal` JS field-rename bug and the 63/87-vs-64/87 pass-rate
   discrepancy — both intentionally left as-is for now.
