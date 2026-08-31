@@ -318,6 +318,6 @@ If a run finishes with `best=0.0` and no rollout has `tool_calls>0`, the contain
 If anything is missing or wrong, ask Boaz — he has the full context on CCC + cap-evolve.
 
 Files referenced:
-- Master scoreboard: `skillsbench-results/task-by-task-87/results.json`
-- Interactive heatmap: `skillsbench-results/task-by-task-87/heatmap.html`
-- EvoSkill comparison: `skillsbench-results/task-by-task-87/evoskill_comparison_chart.html`
+- Master scoreboard: `third_party/skillbench/results/results.json`
+- Interactive heatmap: `third_party/skillbench/results/heatmap.html`
+- EvoSkill comparison: `third_party/skillbench/results/evoskill_comparison_chart.html`
