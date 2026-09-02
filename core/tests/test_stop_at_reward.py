@@ -153,3 +153,33 @@ def test_dashboard_mirror_tolerates_missing_budget_or_spent():
     from cap_evolve import dashboard
     assert dashboard._budget_exhausted(None, Spent(best_val=1.0)) is None
     assert dashboard._budget_exhausted(Budget(stop_at_reward=1.0), None) is None
+
+
+# ---- shipped templates must not pair a ceiling with a single trial ---------
+
+def test_no_shipped_template_pairs_stop_at_reward_with_num_trials_1():
+    """A ceiling is only meaningful if `best_val` could have been wrong.
+
+    With `num_trials: 1` a lucky all-pass val draw has `stderr` exactly 0.0, so no gate
+    or SE bar downstream can catch it and the run can end at iteration 0 while real
+    headroom remains (reproduced by review of #415: val drew 1.0, sealed test 0.667).
+    Ship the ceiling on only where trials give `best_val` a real standard error.
+    """
+    from pathlib import Path
+    from cap_evolve.specfile import read_yaml
+
+    repo = Path(__file__).resolve().parents[2]
+    templates = sorted((repo / "templates").rglob("capevolve.yaml"))
+    assert templates, "no shipped templates found — path drifted?"
+
+    offenders = []
+    for path in templates:
+        spec = read_yaml(path.read_text(encoding="utf-8"))
+        ceiling = float(spec.get("stop_at_reward") or 0.0)
+        trials = int(spec.get("num_trials") or 1)
+        if ceiling > 0.0 and trials < 2:
+            offenders.append(f"{path.relative_to(repo)} "
+                             f"(stop_at_reward={ceiling}, num_trials={trials})")
+    assert not offenders, (
+        "these templates ship a reward ceiling that trusts a single val measurement:\n  "
+        + "\n  ".join(offenders))
