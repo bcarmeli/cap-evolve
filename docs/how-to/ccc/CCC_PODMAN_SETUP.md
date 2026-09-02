@@ -634,22 +634,123 @@ disaster.
 
 ---
 
-## Batch (LSF) mode — TODO
+## Batch (LSF) mode
 
-Running the cap-evolve baseline through `bsub` on CCC needs one more
-consideration: the interactive-shell setup we just did (source
-`setup_podman.sh` and start dbus/podman services) needs to be part of
-the batch job's environment. Draft plan (untested):
+The interactive-shell setup above (source `setup_podman.sh`, start
+dbus/podman services) has to happen inside the batch job. That wrapper
+is [`scripts/ccc/run_ccc_experiment.sh`](../../../scripts/ccc/run_ccc_experiment.sh):
+Phase 1 sources `setup_podman.sh`, Phase 2 loads `.env`, Phase 3 runs
+`cap-evolve run`, Phase 4 prints the headline summary. Results land under
+`results/<suite-id>/<LSB_JOBID>/`, with `cap-evolve.log` as the
+per-job transcript.
 
-1. Wrap the workload in a shell script that sources `setup_podman.sh`
-   first, then runs `cap-evolve run ...`.
-2. `bsub` with enough disk on `/tmp` for the image cache (~200 MB for
-   ubuntu:24.04 + task images), enough memory for concurrent rollouts
-   (~4 GB × concurrency), and enough wall time (7-iter run is 4-6h).
-3. LSF may kill the podman service on job teardown; if that leaves
-   half-written state in `/tmp`, `setup_podman.sh` should handle the
-   next run's cleanup, but verify.
-4. `DOCKER_HOST` and `DBUS_SESSION_BUS_ADDRESS` are per-user paths in
-   `$XDG_RUNTIME_DIR` (host-local `/tmp`) — safe.
+The draft plan's assumptions held up: `DOCKER_HOST` and
+`DBUS_SESSION_BUS_ADDRESS` are host-local `/tmp` paths and are safe, and
+`setup_podman.sh` cleans up the previous run's `/tmp` state. What did
+*not* hold up is the wall-time advice — see below.
 
-Detailed instructions will follow after we've done a batch dry-run.
+The lessons here were paid for in lost runs during the `transfer_eval_v1`
+8-fold zero-shot transfer pilot (2026-09-01/02, `--max-iterations 0`).
+
+### Do NOT pass `-W` (wall-clock limit)
+
+Omit the flag entirely. This reverses the earlier draft advice to "give
+it enough wall time."
+
+A `--max-iterations 0` job finishes its actual `cap-evolve run` in
+roughly 45 minutes, **then frequently fails to exit** — it hangs
+indefinitely in a post-run step (dashboard/teardown) with the complete
+result already written to `cap-evolve.log`. With `-W 2:00` set, LSF then
+killed those jobs with `TERM_RUNLIMIT` *after the work was done*,
+turning successful runs into `EXIT` and making valid results look like
+failures. Several folds had to be re-run purely because of this.
+
+`-W` cannot rescue you from the hang anyway — the hang is the bug, and a
+wall-clock limit just decides how long you wait before losing the job's
+exit status. Detect completion from the log instead (next section).
+
+### Poll `cap-evolve.log`, not `bjobs` STAT
+
+Because of that hang, `bjobs` STAT is **not** a reliable signal that a
+job is still working. A finished job sits in `RUN` forever. The working
+procedure:
+
+```bash
+log=results/<suite-id>/<jobid>/cap-evolve.log
+# A complete run ends with a JSON block containing "iterations".
+if grep -q '"iterations"' "$log"; then
+    # work is done — the process is just hung. Kill this exact job.
+    bkill <jobid>
+fi
+```
+
+Kill **by exact job ID only.** Never `bkill 0` or a wildcard: several
+worktrees/sessions run concurrently under the same UID, and a bulk kill
+takes out someone else's in-flight jobs.
+
+### Distinguish a hung *payload* from a hung *setup*
+
+Two different hangs, two different responses:
+
+| symptom | meaning | action |
+|---|---|---|
+| `cap-evolve.log` has a complete result JSON, job still `RUN` | payload done, post-run hang | `bkill <jobid>`, keep the result |
+| no `cap-evolve.log` at all after ~45 min of `RUN`; stdout frozen in Phase 1/2 | stalled in podman/env setup, never reached `cap-evolve run` | `bkill <jobid>`, resubmit on a **different** host with a fresh `--run-ts` |
+
+The second case is real: one fold sat in `RUN` for 15.6 hours with
+stdout frozen at "Phase 2: loading .env" and never produced a log. There
+is no result to salvage — resubmit. Bump `--run-ts` (e.g. `..._v3`) so
+the retry doesn't resume the previous attempt's partial
+`.capevolve/run_<run-ts>/` state.
+
+### One dedicated host per concurrent job (`-m <host>`)
+
+Rootless podman's graphroot is **per-user per-host**, not per-process, so
+two of your own jobs on the same host share and corrupt each other's
+container state. Pin every concurrent job to its own host:
+
+```bash
+bsub -m cccxc442 ...
+```
+
+Pick hosts that are `ok` in `bhosts -w` **and** absent from `brsvs -w` —
+an advance reservation can block a host for another group even when it
+looks idle.
+
+### `-n 1` for `--max-iterations 0` runs
+
+Baseline and zero-shot-transfer evals are single evaluations with no
+internal parallelism; `-n 4` reserves three idle slots for nothing. Use
+`-n 4` only for full multi-iteration optimizer runs.
+
+### Caveat on `submit_ccc_experiment.sh`
+
+The wrapper hardcodes both `-W` (2:00 for `iter=0`, 8:00 otherwise) and
+`--cpus 4`. Until it's fixed, call `bsub` directly for `--max-iterations 0`
+work:
+
+```bash
+bsub -q normal -M 64G -n 1 -m cccxc442 \
+  -J capevolve_<name> \
+  -oo "$CCC_LOGS/%J.stdout" -eo "$CCC_LOGS/%J.stderr" \
+  bash scripts/ccc/run_ccc_experiment.sh \
+    --suite-id <suite> --max-iterations 0 \
+    --spec <path/to/capevolve.yaml> --project <path/to/project> \
+    --run-ts <run-ts>
+```
+
+Also note `run_ccc_experiment.sh` resolves the CLI as
+`$PROJECT_ROOT/.venv/bin/cap-evolve` — a **worktree-local** venv, not
+`$PATH` or `$CAP_EVOLVE_BIN`. A fresh worktree without its own `.venv`
+fails fast with `FATAL: cap-evolve CLI not found at ...` (exit 2).
+Symlinking the shared venv into the worktree is enough:
+
+```bash
+ln -s /path/to/cap-evolve/.venv <worktree>/.venv
+```
+
+### Sizing (confirmed)
+
+`/tmp` needs ~200 MB for the image cache (ubuntu:24.04 + task images);
+memory ~4 GB × rollout concurrency, and `-M 64G` has been comfortable
+for these runs.
