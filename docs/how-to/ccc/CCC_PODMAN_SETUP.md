@@ -588,6 +588,62 @@ troubleshooting table.
 
 ---
 
+## Layer index: symptom → fix
+
+Thirteen distinct failures had to be resolved to get one task to run, each
+one hidden behind the last. This is the scannable index; the sections
+above have the detail and the reproduction commands.
+
+| # | Symptom | Fix | Where |
+|---|---|---|---|
+| 1 | Image unpack fails, `lchown /etc/gshadow` | `ignore_chown_errors = "true"` | `storage.conf` |
+| 2 | `apt-get install` fails setuid to `_apt` (UID 42) | `APT::Sandbox::User "root";` | patched base |
+| 3 | Postinst chowns in `libc-devtools`/`libgd3`/`fontconfig-config` | `APT::Install-Recommends "false";` + pre-install `python3 python3-pip curl` | patched base |
+| 4 | `aardvark-dns: Failed to connect to bus` | private `dbus-daemon --session`; `containers.conf` disables systemd/cgroup paths | `setup_podman.sh` |
+| 5 | `aardvark-dns: Failed to start transient scope unit` (no systemd) | `network_mode: host` in the base compose yaml | §A |
+| 6 | `readonly database` from zombie podman services | idempotent start (pkill + pidfile) | `setup_podman.sh` |
+| 7 | `docker compose cp` chowns to host UIDs absent from the namespace | replace upload/download with `exec -T` + tar streams | §B |
+| 8 | `docker compose exec` insists on the `agent` user | `--sandbox-user ''` | §C ⚠ |
+| 9 | `Emulate Docker CLI using podman` polluting bench's `pwd` probe | userspace `docker` shim execing podman | `setup_podman.sh` |
+| 10 | Shim shadowed by `/usr/bin/docker` | explicitly PREPEND `~/.local/bin` to `PATH` | `setup_podman.sh` |
+| 11 | Postinst chowns (fontconfig/poppler/cairo) | wrap `chown`/`chgrp`; pre-install `poppler-utils`, `build-essential` | patched base v3 |
+| 12 | Postinst creates system users (`_dbus`, `messagebus`) | wrap `useradd`/`groupadd`/`usermod`/`groupmod`/`adduser`/`addgroup` | patched base v4 |
+| 13 | `dpkg-statoverride` `fchown()` → hard dpkg error, cascading through libpam-systemd/gnumeric/libgtk/libgoffice/libreoffice | wrap `dpkg-statoverride` | patched base v5 |
+
+Removing any one of these puts the smoke back to failing. ⚠ Layer 8 is
+**not** wired for the cap-evolve path — see §C.
+
+---
+
+## What this touches outside the repo
+
+Everything the setup writes to, so you know your own blast radius. All of
+it is in `$HOME` or host-local `/tmp`; nothing needs root.
+
+| Path | What | Written by |
+|---|---|---|
+| `~/.config/containers/storage.conf` | `graphroot`/`runroot` + `ignore_chown_errors` | `setup_podman.sh` (backs up an existing file once to `.bak`) |
+| `~/.config/containers/containers.conf` | compose provider, disables systemd/dbus paths | you, by hand (one-time setup §2) |
+| `~/.docker/cli-plugins/docker-compose` | Compose v2 binary (~60 MB) | you, by hand (one-time setup §1) |
+| `~/.local/bin/docker` | shim execing podman | `setup_podman.sh` |
+| `/tmp/podman-<UID>/`, `/tmp/podman-run-<UID>/` | image store, sockets, dbus, pidfiles | `setup_podman.sh`, per host |
+| `docker.io/library/ubuntu:24.04` | **replaced** with the patched base | `setup_podman.sh` — see the blast-radius section |
+| benchflow's `site-packages` | `docker-compose-base.yaml` (§A), `docker.py` (§B) | you, by hand; originals kept as `.orig` |
+
+The benchflow edits are wiped by `uv tool install --force benchflow`; re-apply
+§A and §B after any upgrade.
+
+### If you ever get admin help, delete all of it
+
+Every workaround here exists to route around one missing thing: a subuid
+range. If CCC admins add you to `/etc/subuid` and `/etc/subgid`, then
+`setup_podman.sh`'s image patching, the wrappers, `ignore_chown_errors`,
+and the §A/§B benchflow edits all become unnecessary — a normal rootless
+podman setup would just work. Revisit this document as a whole rather
+than maintaining it indefinitely.
+
+---
+
 ## Troubleshooting: which layer failed?
 
 Read the failing rollout's `result.json` under `/tmp/skillsbench-smoke-*/
