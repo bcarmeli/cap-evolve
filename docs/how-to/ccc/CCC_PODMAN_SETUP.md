@@ -785,6 +785,11 @@ failures. Several folds had to be re-run purely because of this.
 wall-clock limit just decides how long you wait before losing the job's
 exit status. Detect completion from the log instead (next section).
 
+`submit_ccc_experiment.sh` therefore has **no walltime support at all** —
+it never passes `-W` and offers no flag to add one, so the default cannot
+be quietly reintroduced by a copied command line. If you hand-roll a
+`bsub`, leave `-W` off yourself.
+
 ### Poll `cap-evolve.log`, not `bjobs` STAT
 
 Because of that hang, `bjobs` STAT is **not** a reliable signal that a
@@ -803,6 +808,31 @@ fi
 Kill **by exact job ID only.** Never `bkill 0` or a wildcard: several
 worktrees/sessions run concurrently under the same UID, and a bulk kill
 takes out someone else's in-flight jobs.
+
+### Faster first pass: sweep every job with `lout`
+
+Grepping each run's `cap-evolve.log` needs the suite-id and job-id paths.
+To triage *all* your in-flight jobs at once, ask LSF directly instead —
+`lout <jobid>` prints the job's output, and a finished job's output
+contains an `Exit:` line even while `bjobs` still reports `RUN`:
+
+```bash
+for run in `bjobs | cut -d " " -f1` ; do echo $run ; lout $run | grep "Exit:     0" ; done
+```
+
+Any job that prints `Exit:     0` **has already completed** — it is a
+zombie holding a dedicated host, and `bkill <that exact id>` is correct
+cleanup, not an interruption. A job that prints nothing is genuinely
+still working; leave it alone. (Mind the spacing in the grep: it is
+`Exit:` followed by five spaces.)
+
+Use this as the routine sweep in every status check, then fall back to
+the `cap-evolve.log` check above when you need to know *what the result
+was* rather than merely whether the job is done. Worked example: on
+2026-09-02 job 554531 sat in `RUN` for 3+ hours after its finalize had
+completed, holding a dedicated host that a queued job needed; `lout
+554531` matched immediately, while a concurrent job on the same suite
+printed nothing and was in fact still finalizing.
 
 ### Distinguish a hung *payload* from a hung *setup*
 
@@ -874,9 +904,9 @@ internal parallelism; `-n 4` reserves three idle slots for nothing. Use
 ### Submitting
 
 [`scripts/ccc/submit_ccc_experiment.sh`](../../../scripts/ccc/submit_ccc_experiment.sh)
-implements all of the above: it passes no `-W` unless you explicitly ask
-for one, defaults to `-n 1` for `--max-iterations 0` (and `-n 4`
-otherwise), and takes `--host` for the dedicated-host pin.
+implements all of the above: it never passes `-W` (and has no flag to add
+one), defaults to `-n 1` for `--max-iterations 0` (and `-n 4` otherwise),
+and takes `--host` for the dedicated-host pin.
 
 ```bash
 bash scripts/ccc/submit_ccc_experiment.sh \

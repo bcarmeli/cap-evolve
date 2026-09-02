@@ -28,8 +28,6 @@
 #   --memory MEM           memory per job (default: 64G). CCC's LSF accepts
 #                          the G suffix — verified: bjobs reports MEMLIMIT
 #                          back as "64 G", no rusage[mem=] needed.
-#   --walltime H:MM        wall-clock limit. UNSET by default and you should
-#                          leave it unset — see the WALLTIME note below.
 #   --cpus N               CPU slots (default: 1 for iter=0, else 4)
 #   --host HOST            pin to one LSF host (-m). Use one host per
 #                          concurrent job; avoid the reserved cccxc6xx range.
@@ -48,7 +46,6 @@ SPEC=".capevolve/project/capevolve.yaml"
 PROJECT_DIR=".capevolve/project"
 QUEUE="x86_6h"
 MEMORY="64G"
-WALLTIME=""     # intentionally unset — see the note below; do NOT default it
 CPUS=""         # auto by MAX_ITERATIONS below
 HOST=""         # -m <host>: pin to a dedicated LSF host
 EXTRA_ARGS=""
@@ -63,7 +60,6 @@ while [[ $# -gt 0 ]]; do
     --project)         PROJECT_DIR="$2"; shift 2 ;;
     --queue)           QUEUE="$2"; shift 2 ;;
     --memory)          MEMORY="$2"; shift 2 ;;
-    --walltime)        WALLTIME="$2"; shift 2 ;;
     --cpus)            CPUS="$2"; shift 2 ;;
     --host)            HOST="$2"; shift 2 ;;
     --extra-args)      EXTRA_ARGS="$2"; shift 2 ;;
@@ -78,13 +74,13 @@ if [[ -z "$SUITE_ID" ]]; then
   exit 2
 fi
 
-# WALLTIME is deliberately empty by default — do NOT pass -W. A cap-evolve
-# job often finishes its work and then hangs in a post-run step; a wall-clock
-# limit kills it *after* the result is already written, turning a successful
-# run into TERM_RUNLIMIT and losing the outcome. Detect completion from the
-# job's cap-evolve.log instead and bkill that exact job id.
+# There is deliberately NO walltime support here: this script never passes -W,
+# and offers no flag to add one. A cap-evolve job often finishes its work and
+# then hangs in a post-run step; a wall-clock limit kills it *after* the result
+# is already written, turning a successful run into TERM_RUNLIMIT and losing
+# the outcome. Detect completion from the job's cap-evolve.log — or a quick
+# `lout <jobid> | grep "Exit:     0"` sweep — and bkill that exact job id.
 # See docs/how-to/ccc/CCC_PODMAN_SETUP.md § "Batch (LSF) mode".
-# Pass --walltime explicitly only if you have a specific reason.
 
 if [[ -z "$CPUS" ]]; then
   # --max-iterations 0 is a single eval with no internal parallelism.
@@ -123,10 +119,6 @@ BSUB_CMD=(
 if [[ -n "$HOST" ]]; then
   BSUB_CMD+=(-m "$HOST")
 fi
-# Only if the caller explicitly asked (see the WALLTIME note above).
-if [[ -n "$WALLTIME" ]]; then
-  BSUB_CMD+=(-W "$WALLTIME")
-fi
 BSUB_CMD+=(
   -oo "${CCC_LOGS}/%J.stdout"
   -eo "${CCC_LOGS}/%J.stderr"
@@ -146,7 +138,6 @@ printf 'QUEUE:        %s\n' "$QUEUE"
 printf 'MEMORY:       %s\n' "$MEMORY"
 printf 'CPUs:         %s\n' "$CPUS"
 printf 'HOST:         %s\n' "${HOST:-(unpinned)}"
-printf 'WALLTIME:     %s\n' "$WALLTIME"
 printf 'LOG DIR:      %s\n' "$CCC_LOGS"
 printf 'INNER CMD:    %s\n' "${BSUB_CMD[*]}"
 
