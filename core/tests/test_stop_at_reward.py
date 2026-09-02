@@ -105,3 +105,51 @@ def test_hill_climb_loop_stops_immediately_on_saturated_seed(tmp_path):
     assert result["iterations"] == 0
     assert result["accepts"] == 0
     assert "reward ceiling" in result["stop_reason"]
+
+
+# ---- the dashboard mirror must not drift from the canonical check ----------
+
+_MIRROR_CASES = (
+    # (label, budget kwargs, spent kwargs)
+    ("ceiling reached", {"stop_at_reward": 1.0}, {"best_val": 1.0}),
+    ("ceiling reached with float slop", {"stop_at_reward": 0.7},
+     {"best_val": 0.6999999999999998}),
+    ("ceiling not reached", {"stop_at_reward": 1.0}, {"best_val": 0.99}),
+    ("ceiling off, val at 1.0", {}, {"best_val": 1.0}),
+    ("ceiling wins over max_iterations", {"stop_at_reward": 1.0, "max_iterations": 10},
+     {"best_val": 1.0, "iterations": 1}),
+    ("ceiling wins over stall", {"stop_at_reward": 1.0, "stall": 2},
+     {"best_val": 1.0, "stall": 0}),
+    ("max_iterations only", {"max_iterations": 3}, {"iterations": 3}),
+    ("stall only", {"stall": 2}, {"stall": 2}),
+    ("nothing spent", {"max_iterations": 5, "stop_at_reward": 1.0}, {}),
+)
+
+
+def test_dashboard_budget_mirror_agrees_with_rundir():
+    """`dashboard._budget_exhausted` is a hand-maintained copy of
+    `RunDir.budget_exhausted`. It has silently drifted from the canonical check three
+    times (most recently by missing `stop_at_reward` entirely, so a run that stopped at
+    the ceiling was rendered as still running). Pin the two together so the next drift
+    fails here instead of on the dashboard.
+    """
+    from cap_evolve import dashboard
+
+    for label, bkw, skw in _MIRROR_CASES:
+        budget, spent = Budget(**bkw), Spent(**skw)
+        canonical, reason = RunDir.budget_exhausted(
+            type("_RD", (), {"budget": budget, "spent": spent})())
+        mirrored = dashboard._budget_exhausted(budget, spent)
+        assert canonical == (mirrored is not None), (
+            f"{label}: canonical says {canonical}, dashboard says {mirrored!r}")
+        if canonical:
+            # Same limit blamed, not just the same verdict.
+            limit = reason.split(" reached")[0].split(" (")[0]
+            assert limit.split()[0] in mirrored, (
+                f"{label}: canonical blames {reason!r}, dashboard blames {mirrored!r}")
+
+
+def test_dashboard_mirror_tolerates_missing_budget_or_spent():
+    from cap_evolve import dashboard
+    assert dashboard._budget_exhausted(None, Spent(best_val=1.0)) is None
+    assert dashboard._budget_exhausted(Budget(stop_at_reward=1.0), None) is None

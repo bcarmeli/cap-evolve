@@ -109,7 +109,10 @@ you want intake to ask):
 - stop_at_reward:       <stop as soon as the best val reward reaches this; 0 = off. Fires
                         # before iteration 1 if the seed is already saturated. The sealed
                         # test split is still scored at finalize, so the held-out number
-                        # is never lost. Templates ship this at 1.0.>
+                        # is never lost. Trusts a single raw val measurement with no
+                        # regard for num_trials, so templates with num_trials=1 (best_val's
+                        # stderr is 0 without being meaningful) ship this at 0.0; only the
+                        # multi-trial tau2_bench template ships it at 1.0.>
 - store:                git          # versions every iteration as a commit for an inspectable process
 ```
 

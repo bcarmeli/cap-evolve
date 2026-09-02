@@ -306,7 +306,7 @@ class RunDir:
 
     def budget_exhausted(self) -> tuple[bool, str]:
         b, s = self.budget, self.spent
-        if b.stop_at_reward and s.best_val >= b.stop_at_reward:
+        if b.stop_at_reward and s.best_val >= b.stop_at_reward - 1e-9:
             return True, f"reward ceiling reached (best val {s.best_val:.4f} >= {b.stop_at_reward:.4f})"
         if b.max_iterations and s.iterations >= b.max_iterations:
             return True, f"max_iterations reached ({s.iterations}/{b.max_iterations})"
