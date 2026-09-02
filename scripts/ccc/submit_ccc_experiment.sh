@@ -13,7 +13,7 @@
 #   # Full 7-iter run
 #   bash scripts/ccc/submit_ccc_experiment.sh \
 #       --suite-id iter7_opus_v1 --max-iterations 7 \
-#       --queue x86_1h --memory 64G --walltime 6:00
+#       --queue x86_6h --memory 64G --host cccxc442
 #
 #   # Dry-run — print the bsub command without submitting
 #   bash scripts/ccc/submit_ccc_experiment.sh \
@@ -25,9 +25,14 @@
 #   --spec PATH            path to capevolve.yaml (default: .capevolve/project/capevolve.yaml)
 #   --project PATH         path to .capevolve/project (default: .capevolve/project)
 #   --queue Q              LSF queue (default: x86_6h)
-#   --memory MEM           memory per job (default: 64G)
-#   --walltime H:MM        wall-clock limit (default: 6:00 for iter=0, 12:00 for iter>0)
-#   --cpus N               CPU slots (default: 4)
+#   --memory MEM           memory per job (default: 64G). CCC's LSF accepts
+#                          the G suffix — verified: bjobs reports MEMLIMIT
+#                          back as "64 G", no rusage[mem=] needed.
+#   --walltime H:MM        wall-clock limit. UNSET by default and you should
+#                          leave it unset — see the WALLTIME note below.
+#   --cpus N               CPU slots (default: 1 for iter=0, else 4)
+#   --host HOST            pin to one LSF host (-m). Use one host per
+#                          concurrent job; avoid the reserved cccxc6xx range.
 #   --extra-args "..."     verbatim flags passed to cap-evolve run
 #   --dry-run              print the bsub command, don't submit
 #
@@ -43,11 +48,12 @@ SPEC=".capevolve/project/capevolve.yaml"
 PROJECT_DIR=".capevolve/project"
 QUEUE="x86_6h"
 MEMORY="64G"
-WALLTIME=""     # auto by MAX_ITERATIONS below
-CPUS="4"
+WALLTIME=""     # intentionally unset — see the note below; do NOT default it
+CPUS=""         # auto by MAX_ITERATIONS below
+HOST=""         # -m <host>: pin to a dedicated LSF host
 EXTRA_ARGS=""
 DRY_RUN=false
-CCC_LOGS="${CCC_LOGS:-/dccstor/knewedge2/boazc/ccc_logs}"
+CCC_LOGS="${CCC_LOGS:-}"   # resolved after PROJECT_ROOT is known
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -59,9 +65,10 @@ while [[ $# -gt 0 ]]; do
     --memory)          MEMORY="$2"; shift 2 ;;
     --walltime)        WALLTIME="$2"; shift 2 ;;
     --cpus)            CPUS="$2"; shift 2 ;;
+    --host)            HOST="$2"; shift 2 ;;
     --extra-args)      EXTRA_ARGS="$2"; shift 2 ;;
     --dry-run)         DRY_RUN=true; shift ;;
-    -h|--help)         sed -n '2,40p' "$0"; exit 2 ;;
+    -h|--help)         sed -n '2,/^$/p' "$0"; exit 2 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -71,12 +78,20 @@ if [[ -z "$SUITE_ID" ]]; then
   exit 2
 fi
 
-if [[ -z "$WALLTIME" ]]; then
-  # Baseline is ~1h. Full 7-iter is 4-6h; give margin.
+# WALLTIME is deliberately empty by default — do NOT pass -W. A cap-evolve
+# job often finishes its work and then hangs in a post-run step; a wall-clock
+# limit kills it *after* the result is already written, turning a successful
+# run into TERM_RUNLIMIT and losing the outcome. Detect completion from the
+# job's cap-evolve.log instead and bkill that exact job id.
+# See docs/how-to/ccc/CCC_PODMAN_SETUP.md § "Batch (LSF) mode".
+# Pass --walltime explicitly only if you have a specific reason.
+
+if [[ -z "$CPUS" ]]; then
+  # --max-iterations 0 is a single eval with no internal parallelism.
   if [[ "$MAX_ITERATIONS" == "0" ]]; then
-    WALLTIME="2:00"
+    CPUS="1"
   else
-    WALLTIME="8:00"
+    CPUS="4"
   fi
 fi
 
@@ -87,7 +102,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 INNER="$PROJECT_ROOT/scripts/ccc/run_ccc_experiment.sh"
 [[ -x "$INNER" ]] || { echo "ERROR: inner script not executable: $INNER" >&2; exit 2; }
 
-mkdir -p "$CCC_LOGS"
+# LSF writes %J.stdout/%J.stderr here. Account-neutral default; override
+# with $CCC_LOGS (e.g. a scratch dir with more room than the checkout).
+CCC_LOGS="${CCC_LOGS:-$PROJECT_ROOT/results/.ccc_logs}"
 
 JOB_NAME="capevolve_${SUITE_ID}_iter${MAX_ITERATIONS}"
 
@@ -97,8 +114,20 @@ BSUB_CMD=(
   -q "$QUEUE"
   -M "$MEMORY"
   -n "$CPUS"
-  -W "$WALLTIME"
   -J "$JOB_NAME"
+)
+# Pin to a dedicated host: podman's graphroot is per-user per-host, so two of
+# your own concurrent jobs on one host corrupt each other's container state.
+# Cross-check `brsvs -w` first — the cccxc6xx range is permanently reserved
+# for another group despite looking idle in `bhosts -w`.
+if [[ -n "$HOST" ]]; then
+  BSUB_CMD+=(-m "$HOST")
+fi
+# Only if the caller explicitly asked (see the WALLTIME note above).
+if [[ -n "$WALLTIME" ]]; then
+  BSUB_CMD+=(-W "$WALLTIME")
+fi
+BSUB_CMD+=(
   -oo "${CCC_LOGS}/%J.stdout"
   -eo "${CCC_LOGS}/%J.stderr"
   bash "$INNER"
@@ -116,6 +145,7 @@ printf 'JOB:          %s\n' "$JOB_NAME"
 printf 'QUEUE:        %s\n' "$QUEUE"
 printf 'MEMORY:       %s\n' "$MEMORY"
 printf 'CPUs:         %s\n' "$CPUS"
+printf 'HOST:         %s\n' "${HOST:-(unpinned)}"
 printf 'WALLTIME:     %s\n' "$WALLTIME"
 printf 'LOG DIR:      %s\n' "$CCC_LOGS"
 printf 'INNER CMD:    %s\n' "${BSUB_CMD[*]}"
@@ -125,6 +155,10 @@ if [[ "$DRY_RUN" == true ]]; then
   echo "(dry-run: not submitting)"
   exit 0
 fi
+
+# Only touch the filesystem once we're actually submitting, so --dry-run
+# works from any account / read-only checkout.
+mkdir -p "$CCC_LOGS"
 
 echo
 "${BSUB_CMD[@]}"

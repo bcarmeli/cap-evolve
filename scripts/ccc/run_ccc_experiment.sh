@@ -175,8 +175,16 @@ banner "Phase 1: setup_podman.sh"
 # CRITICAL: `source X | tee Y` puts X in a subshell — its `export`s
 # would be discarded. Process substitution `> >(tee ...)` keeps `source`
 # in the current shell so PATH/DOCKER_HOST/... persist.
-# shellcheck disable=SC1091
-source /dccstor/knewedge2/boazc/workarea/python/setup_podman.sh \
+# Use the sibling script in this repo. $CCC_SETUP_PODMAN overrides it for
+# anyone keeping a patched copy outside the tree.
+SETUP_PODMAN="${CCC_SETUP_PODMAN:-$SCRIPT_DIR/setup_podman.sh}"
+if [[ ! -r "$SETUP_PODMAN" ]]; then
+  echo "FATAL: setup_podman.sh not readable at $SETUP_PODMAN" >&2
+  echo "       Set \$CCC_SETUP_PODMAN to override." >&2
+  exit 2
+fi
+# shellcheck disable=SC1090
+source "$SETUP_PODMAN" \
     > >(tee "$SETUP_LOG") 2>&1
 # Wait a tick so tee finishes flushing to disk before we proceed.
 wait 2>/dev/null || true
@@ -189,7 +197,10 @@ fi
 
 # Sanity: docker shim must win the PATH lookup, otherwise we'll get the
 # "Emulate Docker CLI using podman" stdout pollution in every bench probe.
-if [[ "$(readlink -f "$(which docker)")" != "$HOME/.local/bin/docker" ]]; then
+# Resolve BOTH sides: $HOME often contains a symlink (e.g. /u/<user>
+# fronting GPFS), and comparing a resolved path against an unresolved
+# one aborts on correctly configured nodes.
+if [[ "$(readlink -f "$(command -v docker)")" != "$(readlink -f "$HOME/.local/bin/docker")" ]]; then
   echo "FATAL: 'docker' resolves to $(which docker), not $HOME/.local/bin/docker." >&2
   echo "       PATH ordering is wrong; setup_podman.sh should have prepended it." >&2
   echo "       Aborting to avoid a corrupted run." >&2
@@ -216,7 +227,19 @@ set +a
 {
   echo
   echo "===== .env (redacted) ====="
-  sed 's/\(TOKEN\|KEY\)=.*/\1=<REDACTED>/' "$PROJECT_ROOT/.env"
+  # Denylist redaction is unsafe here: a *_SECRET / *_PASSWORD / Authorization
+  # line would go to disk in cleartext. Invert it — redact every value except
+  # an explicit list of keys known to be non-secret.
+  awk -F= '
+    /^[[:space:]]*(#|$)/ { print; next }
+    {
+      key = $1
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+      if (key ~ /^(SKILLSBENCH_(AGENT|MODEL|TASKS_DIR|SANDBOX_USER)|CAPEVOLVE_[A-Z_]+|DOCKER_HOST)$/)
+        print
+      else
+        print key "=<REDACTED>"
+    }' "$PROJECT_ROOT/.env"
   echo
   echo "===== $SPEC ====="
   cat "$PROJECT_ROOT/$SPEC"
@@ -242,12 +265,30 @@ CE_RUN_ABS="$PROJECT_ROOT/.capevolve/$CE_RUN_DIRNAME"
 LINK_TARGET="$OUT_DIR/run"
 ln -sfn "$CE_RUN_ABS" "$LINK_TARGET"
 
-export PYTHONPATH="$PROJECT_DIR/adapters"
+export PYTHONPATH="$PROJECT_DIR/adapters${PYTHONPATH:+:$PYTHONPATH}"
 export CAPEVOLVE_SKILLS_DIR="$PROJECT_ROOT/skills"
 
-CE_BIN="/dccstor/knewedge2/boazc/workarea/python/skillberry_ai/cap-evolve/.venv/bin/cap-evolve"
-if [[ ! -x "$CE_BIN" ]]; then
-  echo "FATAL: cap-evolve CLI not found at $CE_BIN." >&2
+# KNOWN GAP: the SkillsBench adapter does not pass `--sandbox-user ''` to
+# bench, and nothing reads $SKILLSBENCH_SANDBOX_USER yet. On CCC (no subuid
+# range) rollouts can therefore die with
+#   chown: changing ownership of '/home/agent/.claude': Invalid argument
+# run_ccc_smoke.sh passes the flag directly and is unaffected, so the smoke
+# can be green while this path fails. See CCC_PODMAN_SETUP.md §C.
+
+# Resolve the CLI: explicit override, then the project's own venv, then
+# whatever is on PATH. Note that a git worktree does NOT inherit the main
+# checkout's .venv — either create one, symlink it, or set $CE_BIN.
+if [[ -z "${CE_BIN:-}" ]]; then
+  if [[ -x "$PROJECT_ROOT/.venv/bin/cap-evolve" ]]; then
+    CE_BIN="$PROJECT_ROOT/.venv/bin/cap-evolve"
+  else
+    CE_BIN="$(command -v cap-evolve || true)"
+  fi
+fi
+if [[ -z "$CE_BIN" || ! -x "$CE_BIN" ]]; then
+  echo "FATAL: cap-evolve CLI not found." >&2
+  echo "       Looked for: \$CE_BIN, $PROJECT_ROOT/.venv/bin/cap-evolve, then \$PATH." >&2
+  echo "       Fix: activate the venv, or set CE_BIN=/path/to/cap-evolve." >&2
   exit 2
 fi
 

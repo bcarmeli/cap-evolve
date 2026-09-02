@@ -66,7 +66,7 @@ All three have known workarounds. All three are userspace-only.
 After running the setup below, on any CCC node (login or compute) you can:
 
 ```bash
-source /dccstor/knewedge2/boazc/workarea/python/setup_podman.sh   # one line
+source scripts/ccc/setup_podman.sh   # one line
 docker run --rm ubuntu:24.04 uname -a                              # works
 docker compose -f your.yaml up -d                                  # works
 bench eval run --sandbox docker ...                                # works
@@ -80,9 +80,12 @@ another shell is a no-op.
 ## Prerequisites
 
 - CCC account with home in `/u/<user>` and access to `/dccstor/...` for
-  shared data. Read/execute permission on
-  `/dccstor/knewedge2/boazc/workarea/python/setup_podman.sh` (or copy it
-  to your own path).
+  shared data.
+- A checkout of this repo. The setup script ships with it at
+  [`scripts/ccc/setup_podman.sh`](../../../scripts/ccc/setup_podman.sh) —
+  every path below is relative to the repo root. If you keep a patched
+  copy elsewhere, point `$CCC_SETUP_PODMAN` at it and the runner scripts
+  will use that instead.
 - Podman 5.2+ and podman-docker on the host (default on current CCC).
 - `dbus-daemon` in your `$PATH`. Anaconda's works
   (`~/anaconda3/bin/dbus-daemon`) if you don't have it elsewhere.
@@ -141,7 +144,7 @@ The script is idempotent, so sourcing it in an existing session is fine
 too.
 
 ```bash
-source /dccstor/knewedge2/boazc/workarea/python/setup_podman.sh
+source scripts/ccc/setup_podman.sh
 ```
 
 You'll see:
@@ -511,13 +514,30 @@ don't have. Run as root instead:
 bench eval run --sandbox-user '' ...   # NOTE the empty string
 ```
 
-If you're driving bench through cap-evolve, the adapter should read
-`SKILLSBENCH_SANDBOX_USER` from `.env` and pass it through:
-
-```bash
-# .env
-SKILLSBENCH_SANDBOX_USER=
-```
+> **⚠ Not yet wired for the cap-evolve path.** This works when you call
+> `bench` directly — which is why `run_ccc_smoke.sh` passes
+> `--sandbox-user ''` and passes. It does **not** yet work through
+> cap-evolve: `examples/skillsbench/adapters/adapter.py` never passes
+> `--sandbox-user`, and nothing in the repo reads
+> `SKILLSBENCH_SANDBOX_USER`. So the smoke succeeds while a real
+> `run_ccc_experiment.sh` run hits exactly the failure in the
+> troubleshooting table below:
+>
+> ```
+> chown: changing ownership of '/home/agent/.claude': Invalid argument
+> ```
+>
+> Fixing it needs an adapter change that is not in `main` yet — the
+> adapter should read `SKILLSBENCH_SANDBOX_USER` from `.env` and forward
+> it:
+>
+> ```bash
+> # .env
+> SKILLSBENCH_SANDBOX_USER=
+> ```
+>
+> Until that lands, don't be surprised when the smoke is green and the
+> full run is not.
 
 ---
 
@@ -525,7 +545,7 @@ SKILLSBENCH_SANDBOX_USER=
 
 ```bash
 # Set up
-source /dccstor/knewedge2/boazc/workarea/python/setup_podman.sh
+source scripts/ccc/setup_podman.sh
 
 # From your intake worktree (or any dir with a valid .env)
 cd .../intake_skillbench_c1
@@ -591,6 +611,46 @@ match against these patterns:
 
 ---
 
+## Blast radius: we shadow the official `ubuntu:24.04` tag
+
+**Read this before running `setup_podman.sh` on a node you share with
+other projects.** The patched base image is built and tagged as
+`docker.io/library/ubuntu:24.04` — the *upstream* tag — after a
+`podman rmi -f` on whatever was cached there. Consequences:
+
+- **Any other project on that node that builds `FROM ubuntu:24.04` gets
+  our mutated base**, silently. Their `chown`/`useradd`/`dpkg-statoverride`
+  become wrappers, and `/etc/environment` carries
+  `TAR_OPTIONS=--no-same-owner`.
+- **Those wrappers swallow every error, not just the `EINVAL` we're
+  working around** (`2>/dev/null || :`). A genuine permission bug inside a
+  task image now passes silently, which can turn a real failure into a
+  wrong-but-green verifier result. That is a **benchmark-integrity** risk,
+  not just a convenience one — if a task's scoring depends on file
+  ownership, treat its result as suspect.
+- **Your pristine cached upstream image is destroyed** by the `rmi -f`.
+
+Why tag-shadowing rather than a private tag: task images come from
+SkillsBench with `FROM ubuntu:24.04` baked in, and we can't rewrite every
+upstream Dockerfile. A private tag (`localhost/ccc-ubuntu:24.04`) would
+keep the blast radius inside this project, and is the right fix if
+benchflow ever grows a base-image override. Until then this is a
+deliberate, and deliberately loud, trade-off.
+
+### How to revert
+
+```bash
+# Drop the patched image and the build marker, then re-pull upstream.
+podman rmi -f docker.io/library/ubuntu:24.04
+rm -f /tmp/podman-$(id -u)/.patched-ubuntu24-v*
+podman pull docker.io/library/ubuntu:24.04
+```
+
+Sourcing `setup_podman.sh` again rebuilds the patched image, so revert
+only in a shell where you won't re-source it.
+
+---
+
 ## What's NOT solved
 
 - **Task images that need to `useradd` or `chown` to arbitrary UIDs at
@@ -616,7 +676,7 @@ match against these patterns:
 [ -x ~/.docker/cli-plugins/docker-compose ] && echo "compose v2: OK" || echo "compose v2: MISSING"
 [ -f ~/.config/containers/containers.conf ] && echo "containers.conf: OK" || echo "containers.conf: MISSING"
 [ -x ~/.local/bin/docker ] && echo "docker shim: OK" || echo "docker shim: MISSING (setup_podman.sh writes this)"
-[ "$(readlink -f "$(which docker)")" = "$HOME/.local/bin/docker" ] && echo "docker shim WINS PATH: OK" || echo "docker shim SHADOWED: FAIL (/usr/bin/docker still first)"
+[ "$(readlink -f "$(command -v docker)")" = "$(readlink -f "$HOME/.local/bin/docker")" ] && echo "docker shim WINS PATH: OK" || echo "docker shim SHADOWED: FAIL (/usr/bin/docker still first)"
 podman images docker.io/library/ubuntu:24.04 | grep -q ubuntu && echo "patched ubuntu: OK" || echo "patched ubuntu: MISSING (setup_podman.sh builds this)"
 podman run --rm docker.io/library/ubuntu:24.04 chown nobody:nobody /tmp 2>/dev/null && echo "chown wrapper: OK" || echo "chown wrapper: MISSING (rebuild patched base)"
 podman run --rm docker.io/library/ubuntu:24.04 useradd _dbus 2>/dev/null && echo "useradd wrapper: OK" || echo "useradd wrapper: MISSING (rebuild patched base with v4+)"
@@ -717,27 +777,65 @@ Pick hosts that are `ok` in `bhosts -w` **and** absent from `brsvs -w` —
 an advance reservation can block a host for another group even when it
 looks idle.
 
+### Do NOT submit to the `cccxc6xx` machines
+
+**Never pin a job to a host in the `cccxc600`–`cccxc630` range.** That
+entire range is held by the `infusion` advance reservation for
+`grp_res_infusion`, on a time window running to 2038 — permanent for our
+purposes. Jobs pinned there pend indefinitely or get bumped.
+
+This one is a trap, because `bhosts -w` makes them look like the *best*
+available choice:
+
+```console
+$ bhosts -w cccxc610 cccxc630
+HOST_NAME   STATUS   JL/U  MAX  NJOBS  RUN  SSUSP  USUSP  RSV
+cccxc610    ok       -     128  0      0    0      0      0
+cccxc630    ok       -     128  0      0    0      0      0
+```
+
+`ok` and completely idle — and unusable. `bhosts` does not show
+reservations; only `brsvs -w` does. Always cross-check there before
+pinning:
+
+```bash
+brsvs -w | grep -E "cccxc<candidate>"   # any hit => pick another host
+```
+
+Other reserved hosts to avoid, as of 2026-09: `cccxc701`, `cccxc702`,
+`cccxc704`, `cccxc707`, `cccxc710`, `cccxc711` (`project-prime`, `NCU`,
+`jobsfromhell`), plus `cccxc535` and `cccxc575`. In practice the
+`cccxc4xx`/`cccxc5xx` hosts outside that list are the safe pool — the
+transfer pilot ran on `cccxc442`, `cccxc51x`, `cccxc52x`. Re-check
+`brsvs -w` rather than trusting this list, since reservations change.
+
 ### `-n 1` for `--max-iterations 0` runs
 
 Baseline and zero-shot-transfer evals are single evaluations with no
 internal parallelism; `-n 4` reserves three idle slots for nothing. Use
 `-n 4` only for full multi-iteration optimizer runs.
 
-### Caveat on `submit_ccc_experiment.sh`
+### Submitting
 
-The wrapper hardcodes both `-W` (2:00 for `iter=0`, 8:00 otherwise) and
-`--cpus 4`. Until it's fixed, call `bsub` directly for `--max-iterations 0`
-work:
+[`scripts/ccc/submit_ccc_experiment.sh`](../../../scripts/ccc/submit_ccc_experiment.sh)
+implements all of the above: it passes no `-W` unless you explicitly ask
+for one, defaults to `-n 1` for `--max-iterations 0` (and `-n 4`
+otherwise), and takes `--host` for the dedicated-host pin.
 
 ```bash
-bsub -q normal -M 64G -n 1 -m cccxc442 \
-  -J capevolve_<name> \
-  -oo "$CCC_LOGS/%J.stdout" -eo "$CCC_LOGS/%J.stderr" \
-  bash scripts/ccc/run_ccc_experiment.sh \
-    --suite-id <suite> --max-iterations 0 \
-    --spec <path/to/capevolve.yaml> --project <path/to/project> \
-    --run-ts <run-ts>
+bash scripts/ccc/submit_ccc_experiment.sh \
+    --suite-id transfer_eval_v1 --max-iterations 0 \
+    --spec .capevolve/<project>/capevolve.<task>.yaml \
+    --project .capevolve/<project> \
+    --host cccxc442
 ```
+
+Add `--dry-run` to print the `bsub` line without submitting. Override the
+LSF log directory with `$CCC_LOGS` (default:
+`$PROJECT_ROOT/results/.ccc_logs`).
+
+One job per host, so a batch of N folds means N distinct `--host` values
+picked per the rules above.
 
 Also note `run_ccc_experiment.sh` resolves the CLI as
 `$PROJECT_ROOT/.venv/bin/cap-evolve` — a **worktree-local** venv, not

@@ -11,15 +11,18 @@
 #
 # Usage (batch, via LSF):
 #   bsub -q normal -M 100G -n 1 \
-#        -oo /dccstor/knewedge2/boazc/ccc_logs/%J.stdout \
-#        -eo /dccstor/knewedge2/boazc/ccc_logs/%J.stderr \
+#        -oo "$CCC_LOGS/%J.stdout" -eo "$CCC_LOGS/%J.stderr" \
 #        bash scripts/ccc/run_ccc_smoke.sh --suite-id smoke_batch_v1
 #
 # Options:
 #   --suite-id ID    [REQUIRED] result grouping (e.g. "smoke_batch_v1")
 #   --run-id ID      unique-within-suite; defaults to $LSB_JOBID or local_<ts>
-#   --task NAME      SkillsBench task id (default: invoice-fraud-detection —
-#                    the one we know passes with seed skills)
+#   --task NAME      SkillsBench task id (default: invoice-fraud-detection).
+#                    Chosen because it passes with the seed skills and is
+#                    cheap, so a PASS proves the plumbing. The docs use
+#                    offer-letter-generator in their examples instead: that
+#                    is the task the v7 base image was built to unblock, so
+#                    it exercises the uv/verifier path. Use --task to switch.
 #
 # Output layout:
 #   results/<suite-id>/<run-id>/
@@ -27,7 +30,7 @@
 #     bench.log                    bench eval run stdout+stderr
 #     env_snapshot.txt             .env(redacted) + git commit + podman info
 #     bench_jobs/                  bench's --jobs-dir output
-#     PASS or FAIL or ERROR        marker file with the outcome
+#     OUTCOME                      marker file containing PASS/FAIL/ERROR
 
 set -eo pipefail
 
@@ -40,7 +43,7 @@ while [[ $# -gt 0 ]]; do
     --suite-id) SUITE_ID="$2"; shift 2 ;;
     --run-id)   RUN_ID="$2"; shift 2 ;;
     --task)     TASK="$2"; shift 2 ;;
-    -h|--help)  sed -n '2,25p' "$0"; exit 2 ;;
+    -h|--help)  sed -n '2,/^$/p' "$0"; exit 2 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -86,8 +89,16 @@ banner "Phase 1: setup_podman.sh"
 # CRITICAL: `source X | tee Y` runs X in a subshell — its `export`s
 # would be discarded. Process substitution `> >(tee ...)` keeps `source`
 # in the current shell so PATH/DOCKER_HOST/... persist.
-# shellcheck disable=SC1091
-source /dccstor/knewedge2/boazc/workarea/python/setup_podman.sh \
+# Use the sibling script in this repo. $CCC_SETUP_PODMAN overrides it for
+# anyone keeping a patched copy outside the tree.
+SETUP_PODMAN="${CCC_SETUP_PODMAN:-$SCRIPT_DIR/setup_podman.sh}"
+if [[ ! -r "$SETUP_PODMAN" ]]; then
+  echo "FATAL: setup_podman.sh not readable at $SETUP_PODMAN" >&2
+  echo "       Set \$CCC_SETUP_PODMAN to override." >&2
+  exit 2
+fi
+# shellcheck disable=SC1090
+source "$SETUP_PODMAN" \
     > >(tee "$SETUP_LOG") 2>&1
 # Wait a tick so tee finishes flushing to disk before we proceed.
 wait 2>/dev/null || true
@@ -99,7 +110,10 @@ if [[ -x "$HOME/.local/bin/docker" ]]; then
 fi
 
 # Sanity: docker shim wins PATH?
-if [[ "$(readlink -f "$(which docker)")" != "$HOME/.local/bin/docker" ]]; then
+# Resolve BOTH sides: $HOME often contains a symlink (e.g. /u/<user>
+# fronting GPFS), and comparing a resolved path against an unresolved
+# one aborts on correctly configured nodes.
+if [[ "$(readlink -f "$(command -v docker)")" != "$(readlink -f "$HOME/.local/bin/docker")" ]]; then
   echo "FATAL: 'docker' resolves to $(which docker), not $HOME/.local/bin/docker."
   echo "       PATH ordering is wrong; the run would be corrupted. Aborting."
   echo "ERROR" > "$OUT_DIR/OUTCOME"
@@ -125,7 +139,19 @@ set +a
 {
   echo
   echo "===== .env (redacted) ====="
-  sed 's/\(TOKEN\|KEY\)=.*/\1=<REDACTED>/' "$PROJECT_ROOT/.env"
+  # Denylist redaction is unsafe here: a *_SECRET / *_PASSWORD / Authorization
+  # line would go to disk in cleartext. Invert it — redact every value except
+  # an explicit list of keys known to be non-secret.
+  awk -F= '
+    /^[[:space:]]*(#|$)/ { print; next }
+    {
+      key = $1
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+      if (key ~ /^(SKILLSBENCH_(AGENT|MODEL|TASKS_DIR|SANDBOX_USER)|CAPEVOLVE_[A-Z_]+|DOCKER_HOST)$/)
+        print
+      else
+        print key "=<REDACTED>"
+    }' "$PROJECT_ROOT/.env"
   echo
   echo "===== git commit ====="
   ( cd "$PROJECT_ROOT" && git log -1 --format='commit %H%n%s' 2>&1 || echo "(not a git repo)" )
@@ -139,6 +165,11 @@ banner "Phase 3: bench eval run --include $TASK"
 JOBS="$OUT_DIR/bench_jobs"
 rm -rf "$JOBS"
 
+# SECURITY: --agent-env puts the bearer token on bench's argv, which on a
+# shared cluster is readable by any other user via `ps -ef`, and can land in
+# bench.log if bench ever echoes its own invocation. benchflow 0.6.5 has no
+# env-file passthrough, so this is the only route today — but treat the token
+# as exposed for the lifetime of the process, and rotate it if that matters.
 set +e
 stdbuf -oL -eL bench eval run \
   --tasks-dir "$SKILLSBENCH_TASKS_DIR" \
@@ -158,7 +189,10 @@ banner "Phase 4: results"
 echo "End:   $(date -Iseconds)"
 echo "Exit:  $RC"
 
-# Newest run subdir (timestamped)
+# Exactly one result.json is expected: $JOBS was rm -rf'd above and this
+# is a single-task, single-trial run. `head -1` is arbitrary-but-fine here;
+# it is NOT "newest" (find returns filesystem order). If this script ever
+# grows multiple trials, select deliberately instead.
 RESULT_JSON=$(find "$JOBS" -name result.json 2>/dev/null | head -1)
 if [[ -z "$RESULT_JSON" ]]; then
   echo "No result.json produced — bench never got to a rollout."

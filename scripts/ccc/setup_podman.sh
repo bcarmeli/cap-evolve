@@ -2,8 +2,12 @@
 #
 # Podman setup for CCC.
 #
+# Must be SOURCED from bash (not executed, not sh) — it exports
+# PATH/DOCKER_HOST/XDG_RUNTIME_DIR into the calling shell, and uses
+# bash-only parameter expansion.
+#
 # Usage:
-#   source /dccstor/knewedge2/boazc/workarea/python/setup_podman.sh
+#   source scripts/ccc/setup_podman.sh
 #
 # Or run once to create ~/.config/containers/storage.conf, then just export
 # XDG_RUNTIME_DIR yourself in later shells.
@@ -39,7 +43,7 @@ RUN_BASE="/tmp/podman-run-${_uid}"
 
 # Alternative for GPFS-backed image cache (uncomment and comment the two
 # lines above). Pays a per-host directory but images persist per host.
-# STORAGE_BASE="/dccstor/knewedge2/boazc/.podman-$(hostname)"
+# STORAGE_BASE="/path/to/shared/fs/.podman-$(hostname)"
 # RUN_BASE="/tmp/podman-run-${_uid}"
 
 mkdir -p "$STORAGE_BASE" "$RUN_BASE"
@@ -68,6 +72,12 @@ EOF
 )
 
 if [ ! -f "$CONF_FILE" ] || ! diff -q <(printf '%s\n' "$_desired") "$CONF_FILE" >/dev/null 2>&1; then
+    # Back up a pre-existing file once — it may be hand-maintained, and this
+    # is otherwise a silent destructive overwrite.
+    if [ -f "$CONF_FILE" ] && [ ! -f "$CONF_FILE.bak" ]; then
+        cp -p "$CONF_FILE" "$CONF_FILE.bak"
+        echo "[setup_podman] backed up existing storage.conf -> $CONF_FILE.bak"
+    fi
     printf '%s\n' "$_desired" > "$CONF_FILE"
     echo "[setup_podman] wrote $CONF_FILE"
 fi
@@ -265,10 +275,14 @@ ENV TAR_OPTIONS=--no-same-owner
 #    tasks that expect system-level uvx). Both install steps are
 #    non-fatal — TAR_OPTIONS above still allows verifier's own install
 #    to succeed if the compute node has network reach.
-RUN curl -LsSf https://astral.sh/uv/install.sh | \
+# Pinned: an unpinned installer makes image contents drift silently between
+# rebuilds, and the SkillsBench verifiers this unblocks pin uv themselves
+# (see CCC_PODMAN_SETUP.md §C.1). Bump UV_VERSION deliberately.
+ARG UV_VERSION=0.9.7
+RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | \
     env UV_INSTALL_DIR=/usr/local/bin UV_UNMANAGED_INSTALL=1 sh || \
     echo "warn: uv preinstall to /usr/local/bin failed; verifier fallback via /root/.local/bin"
-RUN curl -LsSf https://astral.sh/uv/install.sh | env HOME=/root sh || \
+RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | env HOME=/root sh || \
     echo "warn: uv preinstall to /root/.local/bin failed; verifier will attempt its own install"
 DOCKERFILE
     # Force the tag off any pre-existing local image before rebuilding.
@@ -296,4 +310,7 @@ echo "[setup_podman] try: podman info | head -30"
 
 unset _uid _desired _sock _i _patched_marker _patch_dockerfile _pidfile
 unset _dbus_sock _dbus_pidfile _docker_shim
+# These four have generic names and this script is sourced into a shell the
+# user keeps working in — don't leave them behind.
+unset STORAGE_BASE RUN_BASE CONF_DIR CONF_FILE
 unset -f _service_alive _dbus_alive 2>/dev/null || true

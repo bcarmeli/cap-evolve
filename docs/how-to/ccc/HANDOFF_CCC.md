@@ -53,7 +53,7 @@ and worked around every rootless-podman-without-admin blocker.
 | `.venv` with `cap-evolve` CLI (editable install of ./core) | `.../cap-evolve/.venv/bin/cap-evolve` |
 | SkillsBench clone @ pinned commit `9a1f4dd5f7659f75707435da3ce854b6e48321d1` | `/dccstor/knewedge2/boazc/workarea/python/skillberry_ai/cap-evolve-benchmarks/skillsbench/` |
 | `bench` CLI (benchflow 0.6.5, from `uv tool install`) | `~/.local/bin/bench` |
-| Podman config generator (shared with other projects) | `/dccstor/knewedge2/boazc/workarea/python/setup_podman.sh` |
+| Podman config generator (shared with other projects) | `scripts/ccc/setup_podman.sh` |
 | Docker Compose v2 (user install) | `~/.docker/cli-plugins/docker-compose` |
 | Podman storage/user config | `~/.config/containers/{storage.conf, containers.conf}` |
 | Modal auth (unused for now — see below) | `~/.modal.toml` |
@@ -70,15 +70,21 @@ Fully wired, matching the worked example at `cap-evolve/examples/skillsbench/`:
 
 `cap-evolve check .capevolve/project` passes green — 10 val tasks, deterministic scorer, materialize() callable.
 
-## Credentials (in [`.env`](.env), gitignored)
+## Credentials
 
-- `ANTHROPIC_BASE_URL=https://ete-litellm.ai-models.vpc-int.res.ibm.com`
-- `ANTHROPIC_AUTH_TOKEN=<real; 25 chars, prefix "sk-">`
-- `OPENAI_BASE_URL=<same host>`, `OPENAI_API_KEY=<same value>`
-- `SKILLSBENCH_AGENT=claude-agent-acp`
-- `SKILLSBENCH_MODEL=claude-opus-4-6`
-- `SKILLSBENCH_TASKS_DIR=/dccstor/knewedge2/boazc/workarea/python/skillberry_ai/cap-evolve-benchmarks/skillsbench/tasks`  ← CCC path (fixed from Mac's `/Users/boazc/...`)
-- `DOCKER_HOST` intentionally NOT hardcoded — sourcing `setup_podman.sh` sets it per node.
+Put your model endpoint and token in `.env` at the project root
+(gitignored, never committed) — see `.env.example` for the full list of
+keys. The ones that matter on CCC:
+
+- `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` — your LiteLLM gateway
+  and token. `OPENAI_BASE_URL` / `OPENAI_API_KEY` typically point at the
+  same gateway.
+- `SKILLSBENCH_AGENT`, `SKILLSBENCH_MODEL` — agent and model ids.
+- `SKILLSBENCH_TASKS_DIR` — **absolute** path to the SkillsBench task
+  clone on CCC. This is the one people get wrong when moving from a Mac:
+  it must be the CCC path, not `/Users/<user>/...`.
+- `DOCKER_HOST` — intentionally NOT set here. Sourcing
+  `scripts/ccc/setup_podman.sh` sets it per node.
 
 ---
 
@@ -92,7 +98,7 @@ CCC has no admin, no `/etc/subuid` entry for `boazc`, no systemd user session on
 # 1) One-shot per host: source setup_podman.sh — writes storage.conf,
 #    starts a private dbus and a podman API socket, exports XDG_RUNTIME_DIR
 #    and DOCKER_HOST, and (on first run) builds a patched ubuntu:24.04.
-source /dccstor/knewedge2/boazc/workarea/python/setup_podman.sh
+source scripts/ccc/setup_podman.sh
 
 # 2) Load creds
 cd /dccstor/knewedge2/boazc/workarea/python/skillberry_ai/cap-evolve-worktrees/intake_skillbench_c1
@@ -161,7 +167,7 @@ Container was Created and Starting when this hit. Everything before it (image bu
 
 - Private dbus (fixed the earlier "Failed to connect to bus" error but aardvark still needs systemd on top of dbus).
 - `--config-override '{"sandbox":{"network_mode":"no-network","allow_internet":false}}'` — the override was **accepted** (no validation error) but bench's compose-file selection didn't pick it up; the `docker-compose-no-network.yaml` was NOT added to the `-f` list at runtime. Either a bench bug in 0.6.5 or a misunderstanding of which config object drives the compose selection.
-- **Edited [`benchflow/sandbox/_compose_files/docker-compose-base.yaml`](/u/boazc/.local/share/uv/tools/benchflow/lib/python3.12/site-packages/benchflow/sandbox/_compose_files/docker-compose-base.yaml) to add `network_mode: none` on the `main` service.** Original is at `docker-compose-base.yaml.orig`. **Even with this, the smoke still errors** — need to check the new error tail (see below).
+- **Edited `benchflow/sandbox/_compose_files/docker-compose-base.yaml` to add `network_mode: none` on the `main` service.** The file lives under the benchflow install, at `~/.local/share/uv/tools/benchflow/lib/python3.*/site-packages/benchflow/sandbox/_compose_files/`. Original is at `docker-compose-base.yaml.orig`. **Even with this, the smoke still errors** — need to check the new error tail (see below).
 
 ---
 
@@ -207,7 +213,7 @@ Everything below is fully documented in-place with comments about *why*.
 - `~/.docker/cli-plugins/docker-compose` — Docker Compose v2 binary (~60 MB, from GitHub releases).
 - `~/.modal.toml` — Modal auth token (present but unused for now).
 - `~/anaconda3/bin/dbus-daemon` — was already there; used by setup_podman.sh.
-- `/dccstor/knewedge2/boazc/workarea/python/setup_podman.sh` — heavily extended: private dbus, podman socket, patched-ubuntu base build, idempotent process management. **This is the main knob to rip out if you get admin help.**
+- `scripts/ccc/setup_podman.sh` — heavily extended: private dbus, podman socket, patched-ubuntu base build, idempotent process management. **This is the main knob to rip out if you get admin help.**
 - `/u/boazc/.local/share/uv/tools/benchflow/lib/python3.12/site-packages/benchflow/sandbox/_compose_files/docker-compose-base.yaml` — patched with `network_mode: none`. Original saved to `.yaml.orig` beside it.
 - `.env` — `SKILLSBENCH_TASKS_DIR` fixed for CCC. Old `DOCKER_HOST` line removed (now set per-node by setup_podman.sh).
 
@@ -215,7 +221,7 @@ Everything below is fully documented in-place with comments about *why*.
 
 ```bash
 # All CCC-specific config, one shot
-source /dccstor/knewedge2/boazc/workarea/python/setup_podman.sh
+source scripts/ccc/setup_podman.sh
 # Confirm — none of these should fail:
 docker run --rm hello-world
 podman run --rm ubuntu:24.04 cat /etc/apt/apt.conf.d/00-rootless
