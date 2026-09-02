@@ -463,7 +463,44 @@ else:
 PY
 ```
 
-### C.1) Pre-install `uv`/`uvx` in the base image (SkillsBench verifier fix, 2026-08-21)
+### C) Pass `--sandbox-user ''` to `bench eval run`
+
+BenchFlow defaults to running the agent inside the container as user
+`agent`. Creating that user requires `useradd -m` which needs UIDs we
+don't have. Run as root instead:
+
+```bash
+bench eval run --sandbox-user '' ...   # NOTE the empty string
+```
+
+> **⚠ Not yet wired for the cap-evolve path.** This works when you call
+> `bench` directly — which is why `run_ccc_smoke.sh` passes
+> `--sandbox-user ''` and passes. It does **not** yet work through
+> cap-evolve: `examples/skillsbench/adapters/adapter.py` never passes
+> `--sandbox-user`, and nothing in the repo reads
+> `SKILLSBENCH_SANDBOX_USER`. So the smoke succeeds while a real
+> `run_ccc_experiment.sh` run hits exactly the failure in the
+> troubleshooting table below:
+>
+> ```
+> chown: changing ownership of '/home/agent/.claude': Invalid argument
+> ```
+>
+> Fixing it needs an adapter change that is not in `main` yet — the
+> adapter should read `SKILLSBENCH_SANDBOX_USER` from `.env` and forward
+> it:
+>
+> ```bash
+> # .env
+> SKILLSBENCH_SANDBOX_USER=
+> ```
+>
+> Until that lands, don't be surprised when the smoke is green and the
+> full run is not.
+
+---
+
+### D) Pre-install `uv`/`uvx` in the base image (SkillsBench verifier fix, 2026-08-21)
 
 Many SkillsBench task `verifier/test.sh` scripts start with something like:
 
@@ -503,43 +540,6 @@ and `uvx --with pytest ...` runs normally.
 (infra fail)" to "10/10 seed (actually saturated)" once the v7 image was
 used. Same fix expected to unblock 7 other SkillsBench tasks whose
 verifiers hardcode the same `uvx` pattern.
-
-### C) Pass `--sandbox-user ''` to `bench eval run`
-
-BenchFlow defaults to running the agent inside the container as user
-`agent`. Creating that user requires `useradd -m` which needs UIDs we
-don't have. Run as root instead:
-
-```bash
-bench eval run --sandbox-user '' ...   # NOTE the empty string
-```
-
-> **⚠ Not yet wired for the cap-evolve path.** This works when you call
-> `bench` directly — which is why `run_ccc_smoke.sh` passes
-> `--sandbox-user ''` and passes. It does **not** yet work through
-> cap-evolve: `examples/skillsbench/adapters/adapter.py` never passes
-> `--sandbox-user`, and nothing in the repo reads
-> `SKILLSBENCH_SANDBOX_USER`. So the smoke succeeds while a real
-> `run_ccc_experiment.sh` run hits exactly the failure in the
-> troubleshooting table below:
->
-> ```
-> chown: changing ownership of '/home/agent/.claude': Invalid argument
-> ```
->
-> Fixing it needs an adapter change that is not in `main` yet — the
-> adapter should read `SKILLSBENCH_SANDBOX_USER` from `.env` and forward
-> it:
->
-> ```bash
-> # .env
-> SKILLSBENCH_SANDBOX_USER=
-> ```
->
-> Until that lands, don't be surprised when the smoke is green and the
-> full run is not.
-
----
 
 ## Verification: run the smoke
 
